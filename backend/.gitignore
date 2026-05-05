@@ -1,0 +1,9 @@
+# Don't commit secrets
+.env
+
+# Don't commit the virtual environment (it's huge and machine-specific)
+venv/
+
+# Python cache files
+__pycache__/
+*.pyc
