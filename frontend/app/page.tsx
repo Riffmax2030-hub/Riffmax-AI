@@ -114,6 +114,10 @@ export default function Home() {
   // Step 2 state — generating the client's site
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState("");
+  const [targetAudience, setTargetAudience] = useState("");
+  const [keyFeatures, setKeyFeatures] = useState("");
+  const [tone, setTone] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
@@ -189,6 +193,10 @@ export default function Home() {
           business_name: businessName,
           industry: industry,
           design_brief: brief,
+          // Only send the advanced fields if the user actually filled them in.
+          target_audience: targetAudience || null,
+          key_features: keyFeatures || null,
+          tone: tone || null,
         }),
       });
       if (!response.ok) {
@@ -373,7 +381,7 @@ export default function Home() {
                 Sitebloom uses the structure above plus the details below to
                 write a complete, original landing page.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-medium text-zinc-700 mb-1.5">
                     Business name
@@ -401,6 +409,89 @@ export default function Home() {
                   />
                 </div>
               </div>
+
+              {/* Advanced options (collapsible) */}
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 mb-4 flex items-center gap-1"
+              >
+                <svg
+                  className={`w-3 h-3 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                {showAdvanced ? "Hide advanced options" : "Show advanced options (optional)"}
+              </button>
+
+              {showAdvanced && (
+                <div className="space-y-4 mb-5 pl-2 border-l-2 border-indigo-100">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
+                      Target audience
+                    </label>
+                    <input
+                      type="text"
+                      value={targetAudience}
+                      onChange={(e) => setTargetAudience(e.target.value)}
+                      placeholder="e.g. busy professionals aged 25–40 in big cities"
+                      disabled={generating}
+                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm"
+                    />
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Who the site is for. Helps Claude pick the right voice.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
+                      Key features to highlight
+                    </label>
+                    <textarea
+                      value={keyFeatures}
+                      onChange={(e) => setKeyFeatures(e.target.value)}
+                      placeholder="e.g. fast WiFi, locally-roasted beans, vegan options, dog-friendly patio"
+                      disabled={generating}
+                      rows={2}
+                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm resize-none"
+                    />
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Selling points. Comma-separated is fine.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
+                      Tone
+                    </label>
+                    <select
+                      value={tone}
+                      onChange={(e) => setTone(e.target.value)}
+                      disabled={generating}
+                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm bg-white"
+                    >
+                      <option value="">Auto — pick based on industry</option>
+                      <option value="Professional and confident">
+                        Professional and confident
+                      </option>
+                      <option value="Warm and friendly">Warm and friendly</option>
+                      <option value="Bold and playful">Bold and playful</option>
+                      <option value="Luxurious and elegant">Luxurious and elegant</option>
+                      <option value="Minimal and modern">Minimal and modern</option>
+                      <option value="Casual and approachable">
+                        Casual and approachable
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={generate}
                 disabled={generating || !businessName || !industry}

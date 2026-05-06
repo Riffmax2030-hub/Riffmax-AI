@@ -159,23 +159,46 @@ DESIGN PRINCIPLES:
 - For hero/section visuals, use clean CSS gradients or geometric SVG, not photos."""
 
 
-def build_generation_user_prompt(business_name: str, industry: str, brief: dict) -> str:
-    """Compose the per-request user message for Claude."""
-    return f"""Generate a complete landing page for this client.
+def build_generation_user_prompt(
+    business_name: str,
+    industry: str,
+    brief: dict,
+    target_audience: Optional[str] = None,
+    key_features: Optional[str] = None,
+    tone: Optional[str] = None,
+) -> str:
+    """Compose the per-request user message for Claude. Optional fields
+    get added only when the user provided them."""
 
-CLIENT BUSINESS:
-- Name: {business_name}
-- Industry: {industry}
+    lines = [
+        "Generate a complete landing page for this client.",
+        "",
+        "CLIENT BUSINESS:",
+        f"- Name: {business_name}",
+        f"- Industry: {industry}",
+    ]
 
-REFERENCE DESIGN BRIEF (a site the client admires — use as INSPIRATION ONLY):
-- Reference URL: {brief.get('url', 'N/A')}
-- Reference page title: {brief.get('page_title', 'N/A')}
-- Reference hero headline: {brief.get('hero_headline', 'N/A')}
-- Reference hero subhead: {brief.get('hero_subhead', 'N/A')}
-- Reference section flow: {' | '.join(brief.get('section_headings', [])[:8]) or 'N/A'}
+    if target_audience:
+        lines.append(f"- Target audience: {target_audience}")
+    if key_features:
+        lines.append(f"- Key features to highlight: {key_features}")
+    if tone:
+        lines.append(f"- Tone preference: {tone}")
 
-Use the section flow and tone as scaffolding, but write entirely original copy \
-for {business_name}. Output only valid HTML — no markdown fences, no preamble."""
+    lines.extend([
+        "",
+        "REFERENCE DESIGN BRIEF (a site the client admires — use as INSPIRATION ONLY):",
+        f"- Reference URL: {brief.get('url', 'N/A')}",
+        f"- Reference page title: {brief.get('page_title', 'N/A')}",
+        f"- Reference hero headline: {brief.get('hero_headline', 'N/A')}",
+        f"- Reference hero subhead: {brief.get('hero_subhead', 'N/A')}",
+        f"- Reference section flow: {' | '.join(brief.get('section_headings', [])[:8]) or 'N/A'}",
+        "",
+        f"Use the section flow and tone as scaffolding, but write entirely original copy "
+        f"for {business_name}. Output only valid HTML — no markdown fences, no preamble.",
+    ])
+
+    return "\n".join(lines)
 
 
 def strip_code_fences(text: str) -> str:
@@ -369,6 +392,10 @@ class GenerateRequest(BaseModel):
     business_name: str
     industry: str
     design_brief: dict  # the JSON we got from /api/scrape
+    # Optional inputs — give Claude richer context for higher quality output.
+    target_audience: Optional[str] = None
+    key_features: Optional[str] = None
+    tone: Optional[str] = None
 
 
 @app.post("/api/generate")
@@ -384,6 +411,9 @@ def generate(request: GenerateRequest):
         request.business_name,
         request.industry,
         request.design_brief,
+        target_audience=request.target_audience,
+        key_features=request.key_features,
+        tone=request.tone,
     )
 
     # Look for an industry-specific skill and append it to the system prompt.
