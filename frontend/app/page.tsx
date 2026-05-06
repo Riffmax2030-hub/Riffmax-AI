@@ -127,6 +127,12 @@ export default function Home() {
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState("");
 
+  // Refine state — applying user feedback to the generated site
+  const [feedback, setFeedback] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState("");
+  const [refineHistory, setRefineHistory] = useState<string[]>([]);
+
   async function analyze() {
     setAnalyzing(true);
     setAnalyzeError("");
@@ -148,6 +154,45 @@ export default function Home() {
       setAnalyzeError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function refineSite() {
+    if (!result || !feedback.trim()) return;
+    setRefining(true);
+    setRefineError("");
+    const submittedFeedback = feedback.trim();
+    try {
+      const response = await fetch(`${API_URL}/api/refine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_name: result.business_name,
+          current_html: result.html,
+          feedback: submittedFeedback,
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server returned ${response.status}`);
+      }
+      const data = await response.json();
+      // Replace the result with the refined version, but keep the metadata.
+      setResult({
+        ...result,
+        html: data.html,
+        input_tokens: data.input_tokens,
+        output_tokens: data.output_tokens,
+      });
+      setRefineHistory((prev) => [...prev, submittedFeedback]);
+      setFeedback("");
+      // The previously deployed version is now stale — clear so the user
+      // can redeploy the refined site if they want.
+      setLiveUrl("");
+    } catch (err) {
+      setRefineError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setRefining(false);
     }
   }
 
@@ -185,6 +230,9 @@ export default function Home() {
     setResult(null);
     setLiveUrl("");
     setDeployError("");
+    setRefineHistory([]);
+    setFeedback("");
+    setRefineError("");
     try {
       const response = await fetch(`${API_URL}/api/generate`, {
         method: "POST",
@@ -613,6 +661,91 @@ export default function Home() {
                 className="w-full h-[800px] border-0 bg-white"
                 sandbox="allow-scripts"
               />
+
+              {/* Refine panel */}
+              <div className="p-5 border-t border-zinc-200 bg-zinc-50">
+                <div className="flex items-center gap-2 mb-2">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4 text-indigo-600"
+                  >
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-zinc-900">
+                    Refine the site
+                  </h3>
+                </div>
+                <p className="text-xs text-zinc-600 mb-3">
+                  Tell Sitebloom what to change in plain English. Be specific.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !refining && feedback.trim()) {
+                        refineSite();
+                      }
+                    }}
+                    placeholder="e.g. make the hero darker; add a pricing section; punchier copy"
+                    disabled={refining}
+                    className="flex-1 px-4 py-3 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm bg-white"
+                  />
+                  <button
+                    onClick={refineSite}
+                    disabled={refining || !feedback.trim()}
+                    className="bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 transition-colors whitespace-nowrap flex items-center justify-center gap-2 text-sm"
+                  >
+                    {refining ? (
+                      <>
+                        <Spinner />
+                        Refining
+                      </>
+                    ) : (
+                      "Refine"
+                    )}
+                  </button>
+                </div>
+
+                {refineError && (
+                  <p className="mt-2 text-sm text-red-700">{refineError}</p>
+                )}
+
+                {/* History of applied refinements */}
+                {refineHistory.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs text-zinc-500 mb-1.5">
+                      Applied so far ({refineHistory.length}):
+                    </p>
+                    <ul className="space-y-1">
+                      {refineHistory.map((f, i) => (
+                        <li
+                          key={i}
+                          className="text-xs text-zinc-700 flex items-start gap-2"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            className="w-3 h-3 text-green-600 flex-shrink-0 mt-0.5"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         )}

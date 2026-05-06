@@ -452,6 +452,74 @@ def generate(request: GenerateRequest):
     }
 
 
+# ---- Refine endpoint ----
+# Takes existing HTML + plain-English feedback, returns updated HTML.
+# Different prompt than /api/generate: we want surgical edits, not a redesign.
+
+REFINE_SYSTEM_PROMPT = """You are an expert web designer modifying an existing \
+landing page based on specific user feedback.
+
+YOUR JOB:
+- Apply ONLY the changes the user requests. Do not redesign things they did not mention.
+- If feedback is vague ("make it better"), interpret reasonably while staying close \
+to the existing design. Don't drastically restructure unless told to.
+- Preserve the existing brand tone, content structure, and information unless the \
+feedback specifically asks to change it.
+
+OUTPUT REQUIREMENTS:
+- Return ONLY raw HTML. No markdown code fences. No commentary. No explanations.
+- The output must be a complete valid HTML5 document starting with <!DOCTYPE html> \
+and ending with </html>.
+- Keep using Tailwind CSS via the CDN: <script src="https://cdn.tailwindcss.com"></script>
+- All styling stays as Tailwind utility classes. All JS inline.
+- Mobile-responsive."""
+
+
+class RefineRequest(BaseModel):
+    business_name: str
+    current_html: str
+    feedback: str
+
+
+@app.post("/api/refine")
+def refine(request: RefineRequest):
+    """Apply user feedback to an already-generated site."""
+    if anthropic_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Anthropic API key not configured.",
+        )
+
+    user_prompt = (
+        f"Modify the following landing page based on the user's feedback.\n\n"
+        f"CLIENT BUSINESS: {request.business_name}\n\n"
+        f"USER'S FEEDBACK:\n{request.feedback}\n\n"
+        f"CURRENT HTML:\n{request.current_html}\n\n"
+        f"Output the complete updated HTML. Apply only the requested changes."
+    )
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8000,
+            system=REFINE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Claude error: {e}")
+
+    raw_text = response.content[0].text if response.content else ""
+    html = strip_code_fences(raw_text)
+
+    return {
+        "business_name": request.business_name,
+        "html": html,
+        "feedback_applied": request.feedback,
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+    }
+
+
 # ---- Deployment endpoint ----
 
 class DeployRequest(BaseModel):
