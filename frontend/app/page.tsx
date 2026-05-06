@@ -30,6 +30,7 @@ type GenerationResult = {
   input_tokens: number;
   output_tokens: number;
   skill_used: string | null;
+  images_added: number;
 };
 
 // ---- Small reusable bits ----
@@ -588,6 +589,11 @@ export default function Home() {
                   {result.skill_used && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hidden sm:inline-block flex-shrink-0">
                       {result.skill_used}
+                    </span>
+                  )}
+                  {result.images_added > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium hidden md:inline-block flex-shrink-0">
+                      {result.images_added} image{result.images_added > 1 ? "s" : ""}
                     </span>
                   )}
                 </div>

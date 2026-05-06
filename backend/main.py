@@ -53,6 +53,12 @@ if not vercel_token or vercel_token == "PASTE_YOUR_KEY_HERE":
     print("WARNING: VERCEL_TOKEN is missing. Deployment disabled.")
     vercel_token = None
 
+# Unsplash Access Key — for replacing image placeholders with real photos.
+unsplash_access_key = os.getenv("UNSPLASH_ACCESS_KEY")
+if not unsplash_access_key or unsplash_access_key == "PASTE_YOUR_KEY_HERE":
+    print("WARNING: UNSPLASH_ACCESS_KEY is missing. Image replacement disabled.")
+    unsplash_access_key = None
+
 
 # ---- Scraper helpers ----
 # Each scraper returns (markdown, title) on success or None on failure.
@@ -155,8 +161,17 @@ DESIGN PRINCIPLES:
 - Logical flow: hero → social proof or stats → features/benefits → testimonials → final CTA
 - Modern aesthetics: ample whitespace, strong typography hierarchy, clear contrast, subtle hover transitions
 - Pick a color palette appropriate to the industry. Be tasteful, not flashy.
-- Use inline SVG for icons (no external image URLs — they may not load).
-- For hero/section visuals, use clean CSS gradients or geometric SVG, not photos."""
+- Use inline SVG for icons.
+
+IMAGES:
+- For photographic images (hero shots, atmosphere photos, food, products, people), use this exact placeholder format:
+  <img src="UNSPLASH:<search query>" alt="<descriptive alt text>" class="<tailwind classes>">
+- The backend will replace each UNSPLASH: placeholder with a real Unsplash photo at runtime.
+- Keep search queries 3–6 words, describing what's in the photo (e.g. "rustic coffee shop interior", "young woman working laptop café", "espresso pour shot dark").
+- Use 2–5 image placeholders per page maximum. Don't pad with images.
+- Always include alt text for accessibility.
+- Add Tailwind classes for sizing/styling (object-cover, rounded-lg, w-full, h-96, etc.).
+- Do NOT use external image URLs that aren't UNSPLASH: placeholders — they may not load."""
 
 
 def build_generation_user_prompt(
@@ -207,6 +222,67 @@ def strip_code_fences(text: str) -> str:
     text = re.sub(r"^```(?:html)?\s*\n?", "", text)
     text = re.sub(r"\n?```\s*$", "", text)
     return text.strip()
+
+
+# ---- Unsplash placeholder replacement ----
+# Claude generates images using `src="UNSPLASH:<search query>"` placeholders.
+# After generation we walk through them, hit the Unsplash search API, and
+# swap each placeholder for a real photo URL.
+
+UNSPLASH_PLACEHOLDER_RE = re.compile(r'src="UNSPLASH:([^"]+)"')
+
+
+def fetch_unsplash_url(query: str) -> Optional[str]:
+    """Search Unsplash for a query, return the first photo's regular-size URL."""
+    if unsplash_access_key is None:
+        return None
+    try:
+        http_response = requests.get(
+            "https://api.unsplash.com/search/photos",
+            params={"query": query, "per_page": 1, "orientation": "landscape"},
+            headers={"Authorization": f"Client-ID {unsplash_access_key}"},
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+    if http_response.status_code != 200:
+        return None
+    data = http_response.json()
+    results = data.get("results", [])
+    if not results:
+        return None
+    return results[0].get("urls", {}).get("regular")
+
+
+def replace_unsplash_placeholders(html: str) -> tuple[str, int]:
+    """Replace all UNSPLASH: placeholders in the HTML with real photo URLs.
+
+    Returns (updated_html, count_replaced). If a lookup fails, the placeholder
+    is replaced with src="" so browsers don't render a broken-image icon.
+    """
+    placeholders = UNSPLASH_PLACEHOLDER_RE.findall(html)
+    if not placeholders:
+        return html, 0
+
+    # Deduplicate (Claude sometimes uses the same query twice for the same image).
+    unique_queries = list(dict.fromkeys(placeholders))
+
+    # Cache one lookup per unique query.
+    url_cache: dict[str, str] = {}
+    for query in unique_queries:
+        if unsplash_access_key is None:
+            url_cache[query] = ""
+            continue
+        url = fetch_unsplash_url(query)
+        url_cache[query] = url or ""
+
+    def _replace(match: re.Match) -> str:
+        query = match.group(1)
+        url = url_cache.get(query, "")
+        return f'src="{url}"'
+
+    new_html = UNSPLASH_PLACEHOLDER_RE.sub(_replace, html)
+    return new_html, len(placeholders)
 
 
 # ---- Skill loader ----
@@ -442,6 +518,9 @@ def generate(request: GenerateRequest):
     raw_text = response.content[0].text if response.content else ""
     html = strip_code_fences(raw_text)
 
+    # Replace UNSPLASH: placeholders with real photo URLs.
+    html, image_count = replace_unsplash_placeholders(html)
+
     return {
         "business_name": request.business_name,
         "industry": request.industry,
@@ -449,6 +528,7 @@ def generate(request: GenerateRequest):
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
         "skill_used": skill_name,  # null if no industry skill matched
+        "images_added": image_count,
     }
 
 
@@ -465,6 +545,13 @@ YOUR JOB:
 to the existing design. Don't drastically restructure unless told to.
 - Preserve the existing brand tone, content structure, and information unless the \
 feedback specifically asks to change it.
+
+IMAGES:
+- The current HTML may contain image URLs from Unsplash already.
+- If the user asks to ADD a new image, use this placeholder format:
+  <img src="UNSPLASH:<3-6 word search query>" alt="..." class="...">
+- The backend swaps UNSPLASH: placeholders for real photos at runtime.
+- Don't change existing real image URLs back to placeholders unless the user asks.
 
 OUTPUT REQUIREMENTS:
 - Return ONLY raw HTML. No markdown code fences. No commentary. No explanations.
@@ -511,12 +598,16 @@ def refine(request: RefineRequest):
     raw_text = response.content[0].text if response.content else ""
     html = strip_code_fences(raw_text)
 
+    # Apply Unsplash to any new placeholders Claude introduced.
+    html, image_count = replace_unsplash_placeholders(html)
+
     return {
         "business_name": request.business_name,
         "html": html,
         "feedback_applied": request.feedback,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
+        "images_added": image_count,
     }
 
 
