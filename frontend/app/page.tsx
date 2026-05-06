@@ -29,6 +29,7 @@ type GenerationResult = {
   html: string;
   input_tokens: number;
   output_tokens: number;
+  skill_used: string | null;
 };
 
 // ---- Small reusable bits ----
@@ -445,6 +446,11 @@ export default function Home() {
                   <div className="text-sm text-zinc-700 font-medium truncate">
                     {result.business_name}
                   </div>
+                  {result.skill_used && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hidden sm:inline-block flex-shrink-0">
+                      {result.skill_used}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-xs text-zinc-500 hidden lg:inline">

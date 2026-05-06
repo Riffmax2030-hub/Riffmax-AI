@@ -4,6 +4,8 @@
 import os
 import re
 import requests
+import yaml
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -184,6 +186,62 @@ def strip_code_fences(text: str) -> str:
     return text.strip()
 
 
+# ---- Skill loader ----
+# Reads the SKILL.md files under backend/skills/industries/ and matches one
+# to the user's industry input. Returns the body text + the skill name, or
+# (None, None) if nothing matches.
+
+SKILLS_DIR = Path(__file__).parent / "skills" / "industries"
+
+
+def load_matching_skill(industry: str) -> tuple[Optional[str], Optional[str]]:
+    """Find the SKILL.md whose 'industries' keyword list overlaps with the
+    user's industry input. Returns (body_text, skill_name) or (None, None)."""
+    if not industry or not SKILLS_DIR.exists():
+        return None, None
+
+    industry_lower = industry.lower()
+
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+
+        try:
+            content = skill_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        # The file must start with YAML frontmatter delimited by --- on its own line.
+        if not content.startswith("---"):
+            continue
+        end_marker = content.find("\n---", 3)
+        if end_marker == -1:
+            continue
+        frontmatter_text = content[3:end_marker].strip()
+        body = content[end_marker:].lstrip("-").strip()
+
+        try:
+            frontmatter = yaml.safe_load(frontmatter_text)
+        except Exception:
+            continue
+        if not isinstance(frontmatter, dict):
+            continue
+
+        keywords = frontmatter.get("industries") or []
+        if not isinstance(keywords, list):
+            continue
+
+        # Match if any keyword appears as a substring of the user's industry text.
+        for kw in keywords:
+            if str(kw).lower() in industry_lower:
+                return body, frontmatter.get("name", skill_dir.name)
+
+    return None, None
+
+
 # ---- Helper functions ----
 
 def clean_markdown_text(text: str) -> str:
@@ -328,11 +386,23 @@ def generate(request: GenerateRequest):
         request.design_brief,
     )
 
+    # Look for an industry-specific skill and append it to the system prompt.
+    skill_body, skill_name = load_matching_skill(request.industry)
+    if skill_body:
+        full_system = (
+            SYSTEM_PROMPT
+            + "\n\n## INDUSTRY-SPECIFIC PATTERNS\n\n"
+            + "Apply the following patterns when generating this site:\n\n"
+            + skill_body
+        )
+    else:
+        full_system = SYSTEM_PROMPT
+
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=8000,
-            system=SYSTEM_PROMPT,
+            system=full_system,
             messages=[{"role": "user", "content": user_prompt}],
         )
     except Exception as e:
@@ -348,6 +418,7 @@ def generate(request: GenerateRequest):
         "html": html,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
+        "skill_used": skill_name,  # null if no industry skill matched
     }
 
 
