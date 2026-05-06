@@ -134,6 +134,12 @@ export default function Home() {
   const [refineError, setRefineError] = useState("");
   const [refineHistory, setRefineHistory] = useState<string[]>([]);
 
+  // Command prompt state — natural language → structured form fields
+  const [commandPrompt, setCommandPrompt] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState("");
+  const [parseSuccess, setParseSuccess] = useState(false);
+
   async function analyze() {
     setAnalyzing(true);
     setAnalyzeError("");
@@ -155,6 +161,43 @@ export default function Home() {
       setAnalyzeError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function parseCommandPrompt() {
+    if (!commandPrompt.trim()) return;
+    setParsing(true);
+    setParseError("");
+    setParseSuccess(false);
+    try {
+      const response = await fetch(`${API_URL}/api/parse_prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: commandPrompt }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server returned ${response.status}`);
+      }
+      const data = await response.json();
+
+      // Auto-fill any field the parser extracted.
+      if (data.url) setUrl(data.url);
+      if (data.business_name) setBusinessName(data.business_name);
+      if (data.industry) setIndustry(data.industry);
+      if (data.target_audience) setTargetAudience(data.target_audience);
+      if (data.key_features) setKeyFeatures(data.key_features);
+      if (data.tone) setTone(data.tone);
+
+      // If any advanced fields were filled, expand that section so the user sees them.
+      if (data.target_audience || data.key_features || data.tone) {
+        setShowAdvanced(true);
+      }
+      setParseSuccess(true);
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setParsing(false);
     }
   }
 
@@ -315,6 +358,100 @@ export default function Home() {
             We&apos;ll build something new — original, conversion-focused, ready
             to ship.
           </p>
+        </div>
+
+        {/* ===== COMMAND PROMPT ===== */}
+        <div className="mb-12">
+          <div className="bg-gradient-to-br from-indigo-50 via-white to-violet-50 rounded-2xl border border-zinc-200 shadow-sm p-3">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex-1 flex items-start gap-3 px-3 pt-2">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-5 h-5 text-indigo-500 flex-shrink-0 mt-1"
+                >
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+                </svg>
+                <textarea
+                  value={commandPrompt}
+                  onChange={(e) => {
+                    setCommandPrompt(e.target.value);
+                    setParseSuccess(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      !e.shiftKey &&
+                      !parsing &&
+                      commandPrompt.trim()
+                    ) {
+                      e.preventDefault();
+                      parseCommandPrompt();
+                    }
+                  }}
+                  placeholder="Describe the site you want — e.g. 'A coffee shop site for Olaide Coffee Roasters in Lagos, like stripe.com, bold and playful tone for young creatives'"
+                  rows={2}
+                  disabled={parsing}
+                  className="flex-1 bg-transparent border-0 focus:outline-none resize-none text-sm placeholder:text-zinc-400 leading-relaxed"
+                />
+              </div>
+              <button
+                onClick={parseCommandPrompt}
+                disabled={parsing || !commandPrompt.trim()}
+                className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-6 py-3 rounded-xl font-medium hover:opacity-90 disabled:opacity-50 transition flex items-center gap-2 whitespace-nowrap self-stretch sm:self-auto"
+              >
+                {parsing ? (
+                  <>
+                    <Spinner />
+                    Parsing
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="w-4 h-4"
+                    >
+                      <path d="M5 3l1.5 4L11 8.5 6.5 10 5 14l-1.5-4L-1 8.5 3.5 7 5 3z" transform="translate(2 0)" />
+                      <path d="M19 14l1 2.5 2.5 1L20 18.5 19 21l-1-2.5L15.5 17.5 18 16.5 19 14z" />
+                    </svg>
+                    Imagine
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {parseError && (
+            <p className="mt-2 text-sm text-red-700 px-2">{parseError}</p>
+          )}
+          {parseSuccess && (
+            <p className="mt-2 text-sm text-green-700 px-2 flex items-center gap-1.5">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="w-4 h-4"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Filled in below — review and adjust, then click Analyze.
+            </p>
+          )}
+          {!parseError && !parseSuccess && (
+            <p className="mt-2 text-xs text-zinc-500 text-center">
+              Or fill the steps below manually
+            </p>
+          )}
         </div>
 
         {/* ===== STEP 1: ANALYZE ===== */}

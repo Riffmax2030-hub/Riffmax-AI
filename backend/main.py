@@ -1,6 +1,7 @@
 # main.py — the entry point for our backend API.
 # Routes (URL endpoints) for our AI Website Builder.
 
+import json
 import os
 import re
 import requests
@@ -608,6 +609,81 @@ def refine(request: RefineRequest):
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
         "images_added": image_count,
+    }
+
+
+# ---- Prompt parser endpoint ----
+# Takes a free-form natural-language description and extracts structured fields.
+# Uses Haiku for speed and cost (~10x cheaper than Sonnet for parsing tasks).
+
+PARSE_SYSTEM_PROMPT = """You extract structured website-builder fields from a \
+free-form user request. Return ONLY a JSON object with these exact keys (use \
+null for any not specified):
+
+- "url": a reference URL the user mentions (must start with http or https). \
+If they only name a brand like "stripe", convert to "https://stripe.com".
+- "business_name": the name of the business the user is building for.
+- "industry": the type of business (e.g. "coffee shop", "B2B SaaS", "yoga studio").
+- "target_audience": who the site is for (a phrase, not a list).
+- "key_features": comma-separated features the user mentioned highlighting.
+- "tone": MUST be exactly one of these strings, or null:
+  "Professional and confident",
+  "Warm and friendly",
+  "Bold and playful",
+  "Luxurious and elegant",
+  "Minimal and modern",
+  "Casual and approachable".
+
+Output ONLY the JSON object. No markdown code fences. No commentary. No prose."""
+
+
+class ParsePromptRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/parse_prompt")
+def parse_prompt(request: ParsePromptRequest):
+    """Parse a free-form prompt into structured form fields."""
+    if anthropic_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Anthropic API key not configured.",
+        )
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            system=PARSE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": request.prompt}],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Claude error: {e}")
+
+    raw_text = response.content[0].text if response.content else ""
+    raw_text = strip_code_fences(raw_text).strip()
+
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Couldn't parse model output as JSON: {raw_text[:200]}",
+        )
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Model returned non-object JSON")
+
+    # Sanitize — only return the keys we expect, with consistent shape.
+    return {
+        "url": data.get("url"),
+        "business_name": data.get("business_name"),
+        "industry": data.get("industry"),
+        "target_audience": data.get("target_audience"),
+        "key_features": data.get("key_features"),
+        "tone": data.get("tone"),
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
     }
 
 
