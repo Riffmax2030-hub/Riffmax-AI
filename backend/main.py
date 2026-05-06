@@ -18,10 +18,13 @@ load_dotenv()
 
 app = FastAPI(title="AI Website Builder API")
 
-# CORS — let the frontend (localhost:3000) talk to us.
+# CORS — allow our local dev frontend AND any Vercel-hosted production frontend
+# to call this backend. The regex matches every *.vercel.app deployment, so
+# preview deployments work too without us having to update this list.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

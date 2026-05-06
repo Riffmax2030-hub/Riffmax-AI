@@ -5,6 +5,11 @@
 
 import { useState } from "react";
 
+// Where to find the backend. In dev this is localhost:8000.
+// In production (on Vercel) it's the Railway URL, set via env var.
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 type DesignBrief = {
   url: string;
   page_title: string;
@@ -123,7 +128,7 @@ export default function Home() {
     setBrief(null);
     setResult(null);
     try {
-      const response = await fetch("http://localhost:8000/api/scrape", {
+      const response = await fetch(`${API_URL}/api/scrape`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
@@ -147,7 +152,7 @@ export default function Home() {
     setDeployError("");
     setLiveUrl("");
     try {
-      const response = await fetch("http://localhost:8000/api/deploy", {
+      const response = await fetch(`${API_URL}/api/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -176,7 +181,7 @@ export default function Home() {
     setLiveUrl("");
     setDeployError("");
     try {
-      const response = await fetch("http://localhost:8000/api/generate", {
+      const response = await fetch(`${API_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
