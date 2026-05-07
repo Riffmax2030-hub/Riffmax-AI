@@ -4,5 +4,4 @@ requests
 python-dotenv
 pydantic
 anthropic
-tavily-python
 pyyaml

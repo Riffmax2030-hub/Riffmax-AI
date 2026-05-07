@@ -1,13 +1,13 @@
-# Sitebloom Skills
+# Riffmax AI Skills
 
 Reusable knowledge files that improve generation quality for specific industries, styles, or patterns. Each `SKILL.md` describes design and copy patterns Claude follows when generating sites in that category.
 
 ## How the loader works
 
-When `/api/generate` is called, the backend:
+When `/api/build` is called, the backend:
 1. Reads each `SKILL.md` under `industries/`.
 2. Parses the YAML frontmatter to find each skill's `industries:` keyword list.
-3. Checks if any keyword appears in the user's `industry` input (case-insensitive substring match).
+3. Checks if any keyword appears in the user's industry (case-insensitive substring match).
 4. If a match is found, the skill body is appended to Claude's system prompt under "INDUSTRY-SPECIFIC PATTERNS".
 5. Claude follows those patterns when generating the site.
 
