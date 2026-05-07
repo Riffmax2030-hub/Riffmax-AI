@@ -398,6 +398,96 @@ Original copy throughout.
 Output the pages now."""
 
 
+# Template styles — visual + structural guidance Claude follows when the user picks one.
+TEMPLATES: dict[str, dict[str, str]] = {
+    "saas": {
+        "name": "SaaS / Tech",
+        "guidance": """Apply SaaS landing patterns:
+- Hero with clear product category line + benefit headline + dual CTAs ("Start free" / "Watch demo")
+- Logo wall ("Trusted by teams at..." — invent realistic but clearly placeholder names)
+- Three-pillar features (benefit-led, not feature-led)
+- One deeper feature explainer with a clean UI mockup (use SVG, not real screenshots)
+- Social proof (one testimonial with name + company + role)
+- Pricing teaser or comparison
+- Final CTA with reassurance ("No credit card required")
+- Color: white/near-white background, one strong accent (indigo/blue/violet)
+- Typography: modern geometric sans, big hero font (60-80px), tight line-height
+- Tone: direct, technical, evidence-based — quantify everything""",
+    },
+    "restaurant": {
+        "name": "Restaurant / Food",
+        "guidance": """Apply restaurant landing patterns:
+- Hero with large food photography (UNSPLASH placeholder), restaurant name prominent, location subtitle
+- CTAs: "Reserve a table" (primary), "View menu" (secondary), phone number visible
+- Welcome/story section (chef name, cuisine philosophy, distinct angle — short)
+- Menu highlights (4-8 signature dishes with photos and prices, names larger than descriptions)
+- Atmosphere section (interior photos)
+- Visit/hours block with address and map placeholder
+- Reviews quoted from critics or customers
+- Color: warm tones (terracotta, deep red, mustard, forest green) OR upscale (navy/gold/ivory) — never stark white
+- Typography: editorial serif headlines, sans body
+- Tone: sensory and inviting, never corporate""",
+    },
+    "portfolio": {
+        "name": "Portfolio / Freelancer",
+        "guidance": """Apply portfolio landing patterns:
+- Hero: name + role/specialty + 1-line intro + primary CTA ("Book a call" / "See work")
+- Selected work grid (4-9 projects with cover images and brief descriptions)
+- Services or skills section (3-5 offerings)
+- About me with portrait photo
+- Testimonials from past clients (real-feeling names + roles)
+- Contact section with email and Calendly-like CTA
+- Color: minimal — black/white/cream with ONE accent — OR bold creative palette
+- Typography: editorial display headlines, clean body
+- Tone: confident but not boastful, personal, specific
+- Whitespace-heavy. Work images dominate.""",
+    },
+    "ecommerce": {
+        "name": "E-commerce / DTC",
+        "guidance": """Apply DTC e-commerce landing patterns:
+- Hero: lifestyle or product hero photo, brand promise headline, "Shop Now" CTA
+- Featured products grid (3-6 items, each with photo, name, price, "Add to cart" button)
+- Brand story / why-we-exist section
+- Customer reviews with photos and star ratings
+- Trust badges row (free shipping, returns, guarantee)
+- Newsletter signup with discount incentive
+- Color: brand-distinctive, often bold and saturated
+- Typography: modern, punchy headlines
+- Tone: enthusiastic, product-led, direct
+- Trust signals visible above-the-fold""",
+    },
+    "lawfirm": {
+        "name": "Law Firm / Pro Services",
+        "guidance": """Apply law firm and professional-services patterns:
+- Hero: trust-led headline, firm specialty stated clearly, "Schedule a Consultation" CTA
+- Practice areas (4-8 cards with brief descriptions)
+- Attorneys/team section with portraits and short bios
+- Case results / representative matters (without confidential client names)
+- About the firm / values block
+- Contact with office addresses, phone, hours
+- Color: navy, burgundy, charcoal, gold, ivory — NEVER bright primaries or playful palettes
+- Typography: serif headlines (editorial gravitas), sans body
+- Tone: authoritative, calm, precise — never aggressive sales pitch
+- Avoid stock business cliches. Imagine real attorney portraits.""",
+    },
+    "startup": {
+        "name": "Startup / App Launch",
+        "guidance": """Apply startup and app-launch landing patterns:
+- Hero: app screenshot or mockup (use clean SVG), benefit headline, "Get Early Access" CTA
+- "Coming soon" badge or waitlist count to create momentum
+- Three-pillar features with bold iconography
+- How-it-works (3-step explainer with numbers)
+- Founders/team with photos and 1-line bios
+- Press mentions or "as seen in" row (use realistic placeholder logos)
+- Email signup form as the main conversion event
+- Color: bold, modern — often gradient accents (indigo→violet, teal→blue, etc.)
+- Typography: punchy hero, friendly body
+- Tone: ambitious, confident, slightly playful
+- Large tap targets — feels mobile-first even on desktop""",
+    },
+}
+
+
 PAGE_SPLIT_RE = re.compile(r"<<<PAGE:\s*([\w-]+)\s*>>>")
 
 
@@ -437,6 +527,7 @@ def hello():
 class BuildRequest(BaseModel):
     description: str
     reference_url: str
+    template: Optional[str] = None  # one of TEMPLATES keys, or None
 
 
 @app.post("/api/build")
@@ -501,15 +592,24 @@ def build(request: BuildRequest):
     # 4 → 5. Generate all pages with Claude
     user_prompt = build_user_prompt(parsed, request.reference_url, reference_pages)
 
+    # Compose the system prompt. Skill (industry copy patterns) and Template
+    # (visual layout style) are orthogonal — both can apply.
+    full_system = BUILD_SYSTEM_PROMPT
+
+    template_meta = TEMPLATES.get(request.template) if request.template else None
+    if template_meta:
+        full_system += (
+            "\n\n## TEMPLATE STYLE\n\n"
+            + f"User chose the '{template_meta['name']}' template. "
+            + template_meta["guidance"]
+        )
+
     skill_body, skill_name = load_matching_skill(parsed.get("industry") or "")
     if skill_body:
-        full_system = (
-            BUILD_SYSTEM_PROMPT
-            + "\n\n## INDUSTRY-SPECIFIC PATTERNS\n\nApply the following patterns:\n\n"
+        full_system += (
+            "\n\n## INDUSTRY-SPECIFIC PATTERNS\n\nApply the following patterns:\n\n"
             + skill_body
         )
-    else:
-        full_system = BUILD_SYSTEM_PROMPT
 
     try:
         response = anthropic_client.messages.create(
@@ -546,7 +646,21 @@ def build(request: BuildRequest):
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
         "skill_used": skill_name,
+        "template_used": template_meta["name"] if template_meta else None,
         "images_added": total_images,
+    }
+
+
+# === LIST TEMPLATES ===
+# Lets the frontend ask the backend what templates exist (instead of hardcoding).
+
+@app.get("/api/templates")
+def list_templates():
+    return {
+        "templates": [
+            {"slug": slug, "name": meta["name"]}
+            for slug, meta in TEMPLATES.items()
+        ]
     }
 
 
