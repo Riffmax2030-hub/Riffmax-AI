@@ -14,12 +14,17 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
-from db import get_client as get_supabase, list_scrape_results
+from db import get_client as get_supabase, list_scrape_results, get_niche_pattern
 from scraper.firecrawl_service import (
     scrape_niche as run_scrape_niche,
     scrape_one as run_scrape_one,
-    get_active_jobs,
+    get_active_jobs as get_scrape_jobs,
     clear_finished_jobs,
+)
+from scraper.analyze_patterns import (
+    analyze_niche as run_analyze_niche,
+    aggregate_niche as run_aggregate_niche,
+    get_analyze_jobs,
 )
 from scraper.targets import SCRAPE_TARGETS, get_all_niches, total_target_count
 
@@ -583,7 +588,7 @@ def admin_list_niches(_=Depends(require_admin)):
 @app.get("/api/admin/scrape-status")
 def admin_scrape_status(_=Depends(require_admin)):
     """In-progress jobs (in-memory) plus most-recent rows from scrape_results."""
-    jobs = get_active_jobs()
+    jobs = get_scrape_jobs()
     recent = list_scrape_results()[:30]
     # Strip raw_content from the response — too big for an admin overview.
     recent_summary = [
@@ -633,6 +638,54 @@ def admin_scrape_one(request: ScrapeOneRequest, _=Depends(require_admin)):
 def admin_clear_finished(_=Depends(require_admin)):
     clear_finished_jobs()
     return {"ok": True}
+
+
+# ---- Phase 11.C — analyze + aggregate ----
+
+@app.get("/api/admin/analyze-status")
+def admin_analyze_status(_=Depends(require_admin)):
+    """In-progress analyze jobs."""
+    return {"active_jobs": get_analyze_jobs()}
+
+
+@app.post("/api/admin/analyze-niche/{niche}")
+def admin_analyze_niche(
+    niche: str,
+    background_tasks: BackgroundTasks,
+    _=Depends(require_admin),
+):
+    """Run Claude analysis on every 'scraped' row for this niche. Background task."""
+    if niche not in SCRAPE_TARGETS:
+        raise HTTPException(status_code=404, detail=f"Unknown niche: {niche}")
+    background_tasks.add_task(run_analyze_niche, niche)
+    return {
+        "status": "started",
+        "niche": niche,
+        "message": "Analysis running. Poll /api/admin/analyze-status to track.",
+    }
+
+
+@app.post("/api/admin/aggregate-niche/{niche}")
+def admin_aggregate_niche(niche: str, _=Depends(require_admin)):
+    """Compose the niche_patterns row from all 'analyzed' rows for this niche."""
+    if niche not in SCRAPE_TARGETS:
+        raise HTTPException(status_code=404, detail=f"Unknown niche: {niche}")
+    aggregated = run_aggregate_niche(niche)
+    if aggregated is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No analyzed rows found for {niche}. Run analyze first.",
+        )
+    return {"status": "aggregated", "niche": niche, "data": aggregated}
+
+
+@app.get("/api/admin/niche-pattern/{niche}")
+def admin_get_niche_pattern(niche: str, _=Depends(require_admin)):
+    """Read the aggregated niche_patterns row for a niche."""
+    pattern = get_niche_pattern(niche)
+    if pattern is None:
+        raise HTTPException(status_code=404, detail=f"No pattern stored for {niche}")
+    return pattern
 
 
 # === BUILD: the main flow ===

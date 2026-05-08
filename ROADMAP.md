@@ -1,4 +1,4 @@
-# AI Autonomous Website Builder — Project Roadmap
+# Riffmax AI — Project Roadmap
 
 A practical, phase-by-phase plan for building an AI-powered website generator. Written for someone learning to code as they build.
 

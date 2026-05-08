@@ -1,219 +1,202 @@
-// page.tsx — Sitebloom homepage at http://localhost:3000
-// Phase 3 visual redesign — clean & professional aesthetic.
+// page.tsx — Riffmax AI homepage. v0-inspired hybrid landing.
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { saveBuild, updateLiveUrl, type HistoryEntry } from "../lib/history";
+import { TEMPLATES } from "../components/templates-data";
 
-// Where to find the backend. In dev this is localhost:8000.
-// In production (on Vercel) it's the Railway URL, set via env var.
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-type DesignBrief = {
-  url: string;
-  page_title: string;
-  hero_headline: string | null;
-  hero_subhead: string | null;
-  section_headings: string[];
-  subsection_headings: string[];
-  headings_count: { h1: number; h2: number; h3: number };
-  raw_content_length: number;
-  raw_content_preview: string;
-  scraper_used?: "tavily" | "firecrawl";
+// ---- Types ----
+
+type GeneratedPage = {
+  slug: string;
+  name: string;
+  html: string;
 };
 
-type GenerationResult = {
+type BuildResult = {
   business_name: string;
   industry: string;
-  html: string;
+  reference_url: string;
+  reference_pages_found: string[];
+  pages: GeneratedPage[];
   input_tokens: number;
   output_tokens: number;
   skill_used: string | null;
+  template_used: string | null;
   images_added: number;
 };
 
-// ---- Small reusable bits ----
+// ---- Static config ----
 
-// Brand mark — gradient square with "S". Recognizable, fast to render.
-function BrandMark() {
-  return (
-    <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-lg flex items-center justify-center shadow-sm">
-      <span className="text-white font-bold text-lg leading-none">S</span>
-    </div>
-  );
-}
+const EXAMPLE_PROMPTS = [
+  "A specialty coffee shop in Lagos called Olaide Roasters. Locally-roasted Nigerian beans, target young creatives, bold and playful tone.",
+  "B2B SaaS landing for an AI legal research tool. Target law firms. Professional and confident tone.",
+  "Wedding photographer portfolio in San Francisco. Romantic, minimalist, editorial.",
+  "DTC e-commerce store for sustainable streetwear. Bold creative palette, target Gen Z.",
+  "Fine dining restaurant in Tokyo. Omakase experience, upscale, navy and gold.",
+  "Mobile app launch for AI fitness coach. Target young professionals, modern gradient aesthetic.",
+];
 
-// Step number badge — indigo when active, green check when done, gray when pending.
-function StepBadge({
-  num,
-  state,
-}: {
-  num: number;
-  state: "pending" | "active" | "done";
-}) {
-  return (
-    <div
-      className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0 transition-colors ${
-        state === "done"
-          ? "bg-green-500 text-white"
-          : state === "active"
-          ? "bg-indigo-600 text-white"
-          : "bg-zinc-200 text-zinc-500"
-      }`}
-    >
-      {state === "done" ? (
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="w-4 h-4"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        num
-      )}
-    </div>
-  );
-}
+// Templates moved to components/templates-data.tsx so /templates can reuse them.
 
-// Inline loading spinner used inside buttons.
-function Spinner() {
+// ---- Reusable bits ----
+
+function Spinner({ className = "" }: { className?: string }) {
   return (
-    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-      <circle
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeOpacity="0.25"
-      />
-      <path
-        d="M12 2a10 10 0 0 1 10 10"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
+    <svg className={`animate-spin w-4 h-4 ${className}`} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
     </svg>
   );
 }
 
-// ---- The page ----
+function Sparkle({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8L12 2z" />
+    </svg>
+  );
+}
 
-export default function Home() {
-  // Step 1 state — analyzing the reference
-  const [url, setUrl] = useState("https://stripe.com");
-  const [brief, setBrief] = useState<DesignBrief | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState("");
+function CheckIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
 
-  // Step 2 state — generating the client's site
-  const [businessName, setBusinessName] = useState("");
-  const [industry, setIndustry] = useState("");
-  const [targetAudience, setTargetAudience] = useState("");
-  const [keyFeatures, setKeyFeatures] = useState("");
-  const [tone, setTone] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [result, setResult] = useState<GenerationResult | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState("");
+function BuildSkeleton() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden"
+    >
+      <div className="px-4 sm:px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex items-center gap-3">
+        <div className="hidden sm:flex gap-1.5 flex-shrink-0">
+          <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+          <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+          <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+        </div>
+        <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+      </div>
+      <div className="h-[520px] sm:h-[640px] md:h-[800px] bg-gradient-to-br from-zinc-50 to-white dark:from-zinc-950 dark:to-zinc-900 flex flex-col items-center justify-center gap-3">
+        <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center shadow-md shadow-indigo-500/40">
+          <Sparkle className="w-6 h-6 text-white animate-pulse" />
+        </div>
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          Riffmax is at work
+        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 max-w-xs text-center">
+          Mapping your reference, scraping key pages, generating original pages, fetching photos.
+        </p>
+      </div>
+    </motion.div>
+  );
+}
 
-  // Step 3 state — deploying the generated site to Vercel
-  const [liveUrl, setLiveUrl] = useState("");
-  const [deploying, setDeploying] = useState(false);
-  const [deployError, setDeployError] = useState("");
+// ---- Page ----
 
-  // Refine state — applying user feedback to the generated site
+// useSearchParams requires a Suspense boundary in App Router; the default
+// export wraps HomeContent in one.
+function HomeContent() {
+  const searchParams = useSearchParams();
+
+  const [description, setDescription] = useState("");
+  const [referenceUrl, setReferenceUrl] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+
+  const [building, setBuilding] = useState(false);
+  const [result, setResult] = useState<BuildResult | null>(null);
+  const [currentPageIdx, setCurrentPageIdx] = useState(0);
+
   const [feedback, setFeedback] = useState("");
   const [refining, setRefining] = useState(false);
-  const [refineError, setRefineError] = useState("");
   const [refineHistory, setRefineHistory] = useState<string[]>([]);
 
-  // Command prompt state — natural language → structured form fields
-  const [commandPrompt, setCommandPrompt] = useState("");
-  const [parsing, setParsing] = useState(false);
-  const [parseError, setParseError] = useState("");
-  const [parseSuccess, setParseSuccess] = useState(false);
+  const [liveUrl, setLiveUrl] = useState("");
+  const [deploying, setDeploying] = useState(false);
 
-  async function analyze() {
-    setAnalyzing(true);
-    setAnalyzeError("");
-    setBrief(null);
+  // Track the history entry id so we can update its liveUrl after deploy.
+  const [historyEntryId, setHistoryEntryId] = useState<string | null>(null);
+
+  // Apply ?template=slug from the URL on mount (lets the Templates page
+  // and Dashboard pre-select a template by linking back here with a query).
+  useEffect(() => {
+    const t = searchParams.get("template");
+    if (t && TEMPLATES.some((tpl) => tpl.slug === t)) {
+      setSelectedTemplate(t);
+    }
+  }, [searchParams]);
+
+  async function build() {
+    if (!description.trim() || !referenceUrl.trim()) return;
+    setBuilding(true);
     setResult(null);
+    setRefineHistory([]);
+    setFeedback("");
+    setLiveUrl("");
+    setCurrentPageIdx(0);
+    setHistoryEntryId(null);
     try {
-      const response = await fetch(`${API_URL}/api/scrape`, {
+      const response = await fetch(`${API_URL}/api/build`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({
+          description,
+          reference_url: referenceUrl,
+          template: selectedTemplate,
+        }),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.detail || `Server returned ${response.status}`);
       }
-      const data: DesignBrief = await response.json();
-      setBrief(data);
-    } catch (err) {
-      setAnalyzeError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setAnalyzing(false);
-    }
-  }
+      const data: BuildResult = await response.json();
+      setResult(data);
+      toast.success(`Generated ${data.pages.length} pages for ${data.business_name}`);
 
-  async function parseCommandPrompt() {
-    if (!commandPrompt.trim()) return;
-    setParsing(true);
-    setParseError("");
-    setParseSuccess(false);
-    try {
-      const response = await fetch(`${API_URL}/api/parse_prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: commandPrompt }),
+      // Save to local history so /dashboard can show it.
+      const entry: HistoryEntry = saveBuild({
+        businessName: data.business_name,
+        industry: data.industry,
+        templateUsed: data.template_used,
+        pageCount: data.pages.length,
+        liveUrl: null,
       });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server returned ${response.status}`);
-      }
-      const data = await response.json();
+      setHistoryEntryId(entry.id);
 
-      // Auto-fill any field the parser extracted.
-      if (data.url) setUrl(data.url);
-      if (data.business_name) setBusinessName(data.business_name);
-      if (data.industry) setIndustry(data.industry);
-      if (data.target_audience) setTargetAudience(data.target_audience);
-      if (data.key_features) setKeyFeatures(data.key_features);
-      if (data.tone) setTone(data.tone);
-
-      // If any advanced fields were filled, expand that section so the user sees them.
-      if (data.target_audience || data.key_features || data.tone) {
-        setShowAdvanced(true);
-      }
-      setParseSuccess(true);
+      setTimeout(() => {
+        document.getElementById("result")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
     } catch (err) {
-      setParseError(err instanceof Error ? err.message : "Unknown error");
+      toast.error(err instanceof Error ? err.message : "Build failed");
     } finally {
-      setParsing(false);
+      setBuilding(false);
     }
   }
 
-  async function refineSite() {
+  async function refineCurrentPage() {
     if (!result || !feedback.trim()) return;
+    const submitted = feedback.trim();
     setRefining(true);
-    setRefineError("");
-    const submittedFeedback = feedback.trim();
     try {
+      const currentPage = result.pages[currentPageIdx];
       const response = await fetch(`${API_URL}/api/refine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           business_name: result.business_name,
-          current_html: result.html,
-          feedback: submittedFeedback,
+          current_html: currentPage.html,
+          feedback: submitted,
         }),
       });
       if (!response.ok) {
@@ -221,20 +204,16 @@ export default function Home() {
         throw new Error(errData.detail || `Server returned ${response.status}`);
       }
       const data = await response.json();
-      // Replace the result with the refined version, but keep the metadata.
-      setResult({
-        ...result,
-        html: data.html,
-        input_tokens: data.input_tokens,
-        output_tokens: data.output_tokens,
-      });
-      setRefineHistory((prev) => [...prev, submittedFeedback]);
+      const newPages = result.pages.map((p, i) =>
+        i === currentPageIdx ? { ...p, html: data.html } : p
+      );
+      setResult({ ...result, pages: newPages });
+      setRefineHistory((prev) => [...prev, `[${result.pages[currentPageIdx].name}] ${submitted}`]);
       setFeedback("");
-      // The previously deployed version is now stale — clear so the user
-      // can redeploy the refined site if they want.
       setLiveUrl("");
+      toast.success("Refinement applied");
     } catch (err) {
-      setRefineError(err instanceof Error ? err.message : "Unknown error");
+      toast.error(err instanceof Error ? err.message : "Refine failed");
     } finally {
       setRefining(false);
     }
@@ -243,7 +222,6 @@ export default function Home() {
   async function deploy() {
     if (!result) return;
     setDeploying(true);
-    setDeployError("");
     setLiveUrl("");
     try {
       const response = await fetch(`${API_URL}/api/deploy`, {
@@ -251,7 +229,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           business_name: result.business_name,
-          html: result.html,
+          pages: result.pages.map((p) => ({ slug: p.slug, html: p.html })),
         }),
       });
       if (!response.ok) {
@@ -260,644 +238,437 @@ export default function Home() {
       }
       const data = await response.json();
       setLiveUrl(data.live_url);
+      // Mirror the live URL into the matching history entry (if we have one)
+      if (historyEntryId) {
+        updateLiveUrl(historyEntryId, data.live_url);
+      }
+      toast.success("Site deployed live!");
     } catch (err) {
-      setDeployError(err instanceof Error ? err.message : "Unknown error");
+      toast.error(err instanceof Error ? err.message : "Deploy failed");
     } finally {
       setDeploying(false);
     }
   }
 
-  async function generate() {
-    if (!brief) return;
-    setGenerating(true);
-    setGenerateError("");
-    setResult(null);
-    setLiveUrl("");
-    setDeployError("");
-    setRefineHistory([]);
-    setFeedback("");
-    setRefineError("");
-    try {
-      const response = await fetch(`${API_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          business_name: businessName,
-          industry: industry,
-          design_brief: brief,
-          // Only send the advanced fields if the user actually filled them in.
-          target_audience: targetAudience || null,
-          key_features: keyFeatures || null,
-          tone: tone || null,
-        }),
-      });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server returned ${response.status}`);
-      }
-      const data: GenerationResult = await response.json();
-      setResult(data);
-    } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  function downloadHtml() {
+  function downloadCurrentPage() {
     if (!result) return;
-    const blob = new Blob([result.html], { type: "text/html" });
+    const page = result.pages[currentPageIdx];
+    const blob = new Blob([page.html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${result.business_name
-      .toLowerCase()
-      .replace(/\s+/g, "-")}.html`;
+    a.download = `${result.business_name.toLowerCase().replace(/\s+/g, "-")}-${page.slug}.html`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${page.name} page`);
   }
 
-  // Compute the visual state of each step
-  const step1State: "pending" | "active" | "done" = brief ? "done" : "active";
-  const step2State: "pending" | "active" | "done" = !brief
-    ? "pending"
-    : result
-    ? "done"
-    : "active";
+  function applyExample(prompt: string) {
+    setDescription(prompt);
+    // focus the textarea so the user can edit
+    setTimeout(() => {
+      document.getElementById("description-input")?.focus();
+    }, 0);
+  }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
-      {/* ===== TOP NAV ===== */}
-      <nav className="border-b border-zinc-200 bg-white/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <BrandMark />
-            <span className="font-bold text-zinc-900 text-lg tracking-tight">
-              Sitebloom
-            </span>
-          </div>
-          <div className="text-xs text-zinc-500 hidden sm:block">
-            AI-powered website generation
-          </div>
-        </div>
-      </nav>
+    <div className="relative overflow-x-hidden">
+      {/* Hero glow — radial gradient behind the hero */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[600px] overflow-hidden"
+      >
+        <div className="absolute left-1/2 top-[-200px] h-[700px] w-[1100px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(124,58,237,0.18),rgba(79,70,229,0.08),transparent)] dark:bg-[radial-gradient(closest-side,rgba(124,58,237,0.35),rgba(79,70,229,0.18),transparent)] blur-3xl" />
+      </div>
 
-      <main className="max-w-3xl mx-auto px-6 py-12 md:py-16">
-        {/* ===== HERO ===== */}
-        <div className="text-center mb-14">
-          <div className="inline-block px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-full mb-5">
-            Powered by Claude
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 pt-14 sm:pt-20 md:pt-24 pb-16">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="text-center mb-10"
+        >
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/60 dark:bg-zinc-900/60 backdrop-blur border border-zinc-200/70 dark:border-zinc-800/70 text-zinc-700 dark:text-zinc-300 text-xs font-medium rounded-full mb-5 shadow-sm">
+            <Sparkle className="w-3 h-3 text-violet-500" />
+            Powered by Claude + Firecrawl
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-zinc-900 tracking-tight mb-4 leading-[1.1]">
-            Original websites,
+          <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-4 leading-[1.05]">
+            Riff off any site.
             <br />
-            generated in seconds.
+            <span className="bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 bg-clip-text text-transparent">
+              Ship something original.
+            </span>
           </h1>
-          <p className="text-lg text-zinc-600 max-w-xl mx-auto">
-            Show us a site you admire and tell us about your business.
-            We&apos;ll build something new — original, conversion-focused, ready
-            to ship.
+          <p className="text-base sm:text-lg text-zinc-600 dark:text-zinc-400 max-w-xl mx-auto">
+            Tell Riffmax AI what you want. We&apos;ll riff off a site you admire and build
+            you something new — multi-page, original, ready to ship.
           </p>
-        </div>
+        </motion.div>
 
-        {/* ===== COMMAND PROMPT ===== */}
-        <div className="mb-12">
-          <div className="bg-gradient-to-br from-indigo-50 via-white to-violet-50 rounded-2xl border border-zinc-200 shadow-sm p-3">
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="flex-1 flex items-start gap-3 px-3 pt-2">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-5 h-5 text-indigo-500 flex-shrink-0 mt-1"
-                >
-                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
-                </svg>
-                <textarea
-                  value={commandPrompt}
-                  onChange={(e) => {
-                    setCommandPrompt(e.target.value);
-                    setParseSuccess(false);
-                  }}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === "Enter" &&
-                      !e.shiftKey &&
-                      !parsing &&
-                      commandPrompt.trim()
-                    ) {
-                      e.preventDefault();
-                      parseCommandPrompt();
-                    }
-                  }}
-                  placeholder="Describe the site you want — e.g. 'A coffee shop site for Olaide Coffee Roasters in Lagos, like stripe.com, bold and playful tone for young creatives'"
-                  rows={2}
-                  disabled={parsing}
-                  className="flex-1 bg-transparent border-0 focus:outline-none resize-none text-sm placeholder:text-zinc-400 leading-relaxed"
-                />
+        {/* AI agent box */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
+          className="bg-white dark:bg-zinc-900 rounded-2xl sm:rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-2xl shadow-indigo-500/5 dark:shadow-violet-500/10 p-5 sm:p-6 md:p-8 mb-8"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="relative">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center shadow-md shadow-indigo-500/40">
+                <Sparkle className="w-5 h-5 text-white" />
+              </div>
+              <span
+                className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-white dark:border-zinc-900 rounded-full ${
+                  building ? "bg-amber-500 animate-pulse" : "bg-green-500"
+                }`}
+              />
+            </div>
+            <div>
+              <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">Riffmax AI</h2>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {building ? "Riffing — mapping, scraping, generating..." : "Online · ready to riff"}
+              </p>
+            </div>
+          </div>
+
+          <label htmlFor="description-input" className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+            Tell me what you want to build
+          </label>
+          <textarea
+            id="description-input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="A specialty coffee shop in Lagos called Olaide Coffee Roasters. Target young creatives, bold and playful tone."
+            rows={4}
+            disabled={building}
+            className="w-full px-4 py-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition resize-none text-sm leading-relaxed mb-5 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+          />
+
+          <label className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+            Riff off this site
+            <span className="ml-2 font-normal text-xs text-zinc-500 dark:text-zinc-400">
+              (we&apos;ll learn from it, not copy it)
+            </span>
+          </label>
+          <input
+            type="url"
+            value={referenceUrl}
+            onChange={(e) => setReferenceUrl(e.target.value)}
+            placeholder="https://example.com"
+            disabled={building}
+            className="w-full px-4 py-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-sm mb-5 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+          />
+
+          {/* Selected template chip (if any) */}
+          {selectedTemplate && (
+            <div className="mb-5 flex items-center justify-between px-4 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-900">
+              <div className="flex items-center gap-2 text-sm">
+                <CheckIcon className="w-4 h-4 text-violet-600 dark:text-violet-400 flex-shrink-0" />
+                <span className="text-zinc-700 dark:text-zinc-300">
+                  Style: <strong className="text-violet-700 dark:text-violet-300">
+                    {TEMPLATES.find((t) => t.slug === selectedTemplate)?.name}
+                  </strong>
+                </span>
               </div>
               <button
-                onClick={parseCommandPrompt}
-                disabled={parsing || !commandPrompt.trim()}
-                className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-6 py-3 rounded-xl font-medium hover:opacity-90 disabled:opacity-50 transition flex items-center gap-2 whitespace-nowrap self-stretch sm:self-auto"
+                onClick={() => setSelectedTemplate(null)}
+                className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+                aria-label="Clear template"
               >
-                {parsing ? (
-                  <>
-                    <Spinner />
-                    Parsing
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="w-4 h-4"
-                    >
-                      <path d="M5 3l1.5 4L11 8.5 6.5 10 5 14l-1.5-4L-1 8.5 3.5 7 5 3z" transform="translate(2 0)" />
-                      <path d="M19 14l1 2.5 2.5 1L20 18.5 19 21l-1-2.5L15.5 17.5 18 16.5 19 14z" />
-                    </svg>
-                    Imagine
-                  </>
-                )}
+                Clear
               </button>
             </div>
-          </div>
+          )}
 
-          {parseError && (
-            <p className="mt-2 text-sm text-red-700 px-2">{parseError}</p>
-          )}
-          {parseSuccess && (
-            <p className="mt-2 text-sm text-green-700 px-2 flex items-center gap-1.5">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                className="w-4 h-4"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              Filled in below — review and adjust, then click Analyze.
-            </p>
-          )}
-          {!parseError && !parseSuccess && (
-            <p className="mt-2 text-xs text-zinc-500 text-center">
-              Or fill the steps below manually
-            </p>
-          )}
-        </div>
+          <button
+            onClick={build}
+            disabled={building || !description.trim() || !referenceUrl.trim()}
+            className="group w-full bg-gradient-to-br from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-4 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 dark:shadow-violet-500/30"
+          >
+            {building ? (
+              <>
+                <Spinner />
+                <span className="hidden sm:inline">Riffing your website... (30–60 seconds)</span>
+                <span className="sm:hidden">Riffing... (30–60s)</span>
+              </>
+            ) : (
+              <>
+                <Sparkle className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                Start a Riff
+              </>
+            )}
+          </button>
+        </motion.div>
 
-        {/* ===== STEP 1: ANALYZE ===== */}
-        <section className="mb-6">
-          <div className="flex items-center gap-3 mb-4">
-            <StepBadge num={1} state={step1State} />
-            <h2 className="text-xl font-semibold text-zinc-900">
-              Choose a reference
-            </h2>
-          </div>
-          <div className="ml-0 sm:ml-11 bg-white rounded-2xl border border-zinc-200 shadow-sm p-6">
-            <p className="text-sm text-zinc-600 mb-4">
-              Paste a well-designed site in your client&apos;s industry. We&apos;ll
-              learn its structure and copywriting tone.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com"
-                disabled={analyzing}
-                className="flex-1 px-4 py-3 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-              />
+        {/* Example prompt chips */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          className="mb-16"
+        >
+          <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 text-center">
+            Try one of these
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {EXAMPLE_PROMPTS.map((p, i) => (
               <button
-                onClick={analyze}
-                disabled={analyzing || !url}
-                className="bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 transition-colors whitespace-nowrap flex items-center justify-center gap-2"
+                key={i}
+                onClick={() => applyExample(p)}
+                className="text-xs px-3 py-2 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-violet-400 dark:hover:border-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors max-w-[280px] truncate"
+                title={p}
               >
-                {analyzing ? (
-                  <>
-                    <Spinner />
-                    Analyzing
-                  </>
-                ) : (
-                  "Analyze"
-                )}
+                {p.split(".")[0]}
               </button>
-            </div>
+            ))}
           </div>
-        </section>
+        </motion.div>
 
-        {analyzeError && (
-          <div className="ml-0 sm:ml-11 bg-red-50 border border-red-200 rounded-xl p-4 text-red-800 text-sm mb-6">
-            {analyzeError}
+        {/* Templates section */}
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.5 }}
+          className="mb-16"
+        >
+          <div className="text-center mb-8">
+            <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-2">
+              Or start from a style
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Six battle-tested templates. Click one to apply, then describe your business above.
+            </p>
           </div>
-        )}
-
-        {/* ===== DESIGN BRIEF REVEAL ===== */}
-        {brief && (
-          <div className="ml-0 sm:ml-11 bg-white rounded-2xl border border-zinc-200 shadow-sm p-6 mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-                Design brief
-              </h3>
-              {brief.scraper_used && (
-                <span
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                    brief.scraper_used === "tavily"
-                      ? "bg-blue-50 text-blue-700"
-                      : "bg-amber-50 text-amber-700"
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+            {TEMPLATES.map((t) => {
+              const Icon = t.icon;
+              const isSelected = selectedTemplate === t.slug;
+              return (
+                <button
+                  key={t.slug}
+                  onClick={() => setSelectedTemplate(isSelected ? null : t.slug)}
+                  className={`group relative p-5 rounded-2xl border text-left transition-all overflow-hidden ${
+                    isSelected
+                      ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30 shadow-lg shadow-violet-500/10"
+                      : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-300 dark:hover:border-violet-700 hover:shadow-md"
                   }`}
                 >
-                  via {brief.scraper_used}
-                </span>
-              )}
-            </div>
-
-            <div className="mb-5">
-              <p className="text-xs text-zinc-500 mb-1">Hero headline</p>
-              <p className="text-lg font-bold text-zinc-900">
-                {brief.hero_headline || "(none detected)"}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-xs text-zinc-500 mb-2">
-                Section flow · {brief.section_headings.length} sections
-              </p>
-              <ol className="space-y-1.5">
-                {brief.section_headings.slice(0, 8).map((h, i) => (
-                  <li
-                    key={i}
-                    className="text-sm text-zinc-700 flex items-start gap-2"
-                  >
-                    <span className="text-zinc-400 font-mono text-xs mt-0.5 w-6 flex-shrink-0">
-                      {(i + 1).toString().padStart(2, "0")}
-                    </span>
-                    <span>{h}</span>
-                  </li>
-                ))}
-                {brief.section_headings.length > 8 && (
-                  <li className="text-sm text-zinc-400 ml-8">
-                    + {brief.section_headings.length - 8} more
-                  </li>
-                )}
-              </ol>
-            </div>
-          </div>
-        )}
-
-        {/* ===== STEP 2: GENERATE ===== */}
-        {brief && (
-          <section className="mb-6">
-            <div className="flex items-center gap-3 mb-4">
-              <StepBadge num={2} state={step2State} />
-              <h2 className="text-xl font-semibold text-zinc-900">
-                Tell us about your client
-              </h2>
-            </div>
-            <div className="ml-0 sm:ml-11 bg-white rounded-2xl border border-zinc-200 shadow-sm p-6">
-              <p className="text-sm text-zinc-600 mb-5">
-                Sitebloom uses the structure above plus the details below to
-                write a complete, original landing page.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1.5">
-                    Business name
-                  </label>
-                  <input
-                    type="text"
-                    value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="e.g. Olaide Coffee Roasters"
-                    disabled={generating}
-                    className="w-full px-4 py-3 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1.5">
-                    Industry
-                  </label>
-                  <input
-                    type="text"
-                    value={industry}
-                    onChange={(e) => setIndustry(e.target.value)}
-                    placeholder="e.g. specialty coffee shop"
-                    disabled={generating}
-                    className="w-full px-4 py-3 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                  />
-                </div>
-              </div>
-
-              {/* Advanced options (collapsible) */}
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 mb-4 flex items-center gap-1"
-              >
-                <svg
-                  className={`w-3 h-3 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-                {showAdvanced ? "Hide advanced options" : "Show advanced options (optional)"}
-              </button>
-
-              {showAdvanced && (
-                <div className="space-y-4 mb-5 pl-2 border-l-2 border-indigo-100">
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
-                      Target audience
-                    </label>
-                    <input
-                      type="text"
-                      value={targetAudience}
-                      onChange={(e) => setTargetAudience(e.target.value)}
-                      placeholder="e.g. busy professionals aged 25–40 in big cities"
-                      disabled={generating}
-                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm"
-                    />
-                    <p className="text-xs text-zinc-500 mt-1">
-                      Who the site is for. Helps Claude pick the right voice.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
-                      Key features to highlight
-                    </label>
-                    <textarea
-                      value={keyFeatures}
-                      onChange={(e) => setKeyFeatures(e.target.value)}
-                      placeholder="e.g. fast WiFi, locally-roasted beans, vegan options, dog-friendly patio"
-                      disabled={generating}
-                      rows={2}
-                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm resize-none"
-                    />
-                    <p className="text-xs text-zinc-500 mt-1">
-                      Selling points. Comma-separated is fine.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1.5">
-                      Tone
-                    </label>
-                    <select
-                      value={tone}
-                      onChange={(e) => setTone(e.target.value)}
-                      disabled={generating}
-                      className="w-full px-4 py-2.5 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm bg-white"
-                    >
-                      <option value="">Auto — pick based on industry</option>
-                      <option value="Professional and confident">
-                        Professional and confident
-                      </option>
-                      <option value="Warm and friendly">Warm and friendly</option>
-                      <option value="Bold and playful">Bold and playful</option>
-                      <option value="Luxurious and elegant">Luxurious and elegant</option>
-                      <option value="Minimal and modern">Minimal and modern</option>
-                      <option value="Casual and approachable">
-                        Casual and approachable
-                      </option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              <button
-                onClick={generate}
-                disabled={generating || !businessName || !industry}
-                className="w-full bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 transition-colors flex items-center justify-center gap-2"
-              >
-                {generating ? (
-                  <>
-                    <Spinner />
-                    Generating... (5–20 seconds)
-                  </>
-                ) : (
-                  "Generate website"
-                )}
-              </button>
-            </div>
-          </section>
-        )}
-
-        {generateError && (
-          <div className="ml-0 sm:ml-11 bg-red-50 border border-red-200 rounded-xl p-4 text-red-800 text-sm mb-6">
-            {generateError}
-          </div>
-        )}
-
-        {/* ===== STEP 3: PREVIEW ===== */}
-        {result && (
-          <section className="mt-10">
-            <div className="flex items-center gap-3 mb-4">
-              <StepBadge num={3} state="done" />
-              <h2 className="text-xl font-semibold text-zinc-900">
-                Your site is ready
-              </h2>
-            </div>
-            <div className="ml-0 sm:ml-11 bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-              {/* Browser-frame style header */}
-              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 bg-zinc-50">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex gap-1.5 flex-shrink-0">
-                    <div className="w-3 h-3 rounded-full bg-zinc-300" />
-                    <div className="w-3 h-3 rounded-full bg-zinc-300" />
-                    <div className="w-3 h-3 rounded-full bg-zinc-300" />
-                  </div>
-                  <div className="text-sm text-zinc-700 font-medium truncate">
-                    {result.business_name}
-                  </div>
-                  {result.skill_used && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hidden sm:inline-block flex-shrink-0">
-                      {result.skill_used}
-                    </span>
+                  {isSelected && (
+                    <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-violet-600 text-white flex items-center justify-center shadow">
+                      <CheckIcon className="w-3.5 h-3.5" />
+                    </div>
                   )}
-                  {result.images_added > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium hidden md:inline-block flex-shrink-0">
-                      {result.images_added} image{result.images_added > 1 ? "s" : ""}
-                    </span>
+                  <div
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 transition-colors ${
+                      isSelected
+                        ? "bg-violet-600 text-white"
+                        : "bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 group-hover:bg-violet-200 dark:group-hover:bg-violet-900/60"
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-1">
+                    {t.name}
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">{t.bestFor}</p>
+                </button>
+              );
+            })}
+          </div>
+        </motion.section>
+
+        {/* Skeleton OR Result */}
+        <div id="result">
+          <AnimatePresence mode="wait">
+            {building && !result && <BuildSkeleton key="skeleton" />}
+
+            {result && (
+              <motion.section
+                key="result"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+                className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-indigo-500/5 dark:shadow-violet-500/10 overflow-hidden"
+              >
+                <div className="px-4 sm:px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+                  <div className="flex items-center justify-between gap-2 sm:gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                      <div className="hidden sm:flex gap-1.5 flex-shrink-0">
+                        <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        <div className="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                      </div>
+                      <div className="text-sm text-zinc-700 dark:text-zinc-300 font-medium truncate">
+                        {result.business_name}
+                      </div>
+                      {result.template_used && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 font-medium hidden sm:inline-block flex-shrink-0">
+                          {result.template_used}
+                        </span>
+                      )}
+                      {result.skill_used && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-medium hidden md:inline-block flex-shrink-0">
+                          {result.skill_used}
+                        </span>
+                      )}
+                      {result.images_added > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-medium hidden lg:inline-block flex-shrink-0">
+                          {result.images_added} photos
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={downloadCurrentPage}
+                        className="bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 px-3 py-1.5 rounded-lg font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-xs"
+                      >
+                        Download
+                      </button>
+                      <button
+                        onClick={deploy}
+                        disabled={deploying || !!liveUrl}
+                        className="bg-violet-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-violet-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 disabled:text-zinc-500 dark:disabled:text-zinc-500 transition-colors text-xs flex items-center gap-1.5"
+                      >
+                        {deploying ? (
+                          <>
+                            <Spinner />
+                            Deploying
+                          </>
+                        ) : liveUrl ? (
+                          "Deployed"
+                        ) : (
+                          "Deploy"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {result.pages.length > 1 && (
+                    <div className="mt-3 -mx-1 px-1 flex gap-1.5 overflow-x-auto sm:flex-wrap [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                      {result.pages.map((p, i) => (
+                        <button
+                          key={p.slug}
+                          onClick={() => setCurrentPageIdx(i)}
+                          className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap min-h-[36px] ${
+                            i === currentPageIdx
+                              ? "bg-zinc-900 dark:bg-zinc-50 text-white dark:text-zinc-900"
+                              : "bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                          }`}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs text-zinc-500 hidden lg:inline">
-                    {result.input_tokens.toLocaleString()} →{" "}
-                    {result.output_tokens.toLocaleString()} tokens
-                  </span>
-                  <button
-                    onClick={downloadHtml}
-                    className="bg-white border border-zinc-300 text-zinc-700 px-3 py-1.5 rounded-lg font-medium hover:bg-zinc-50 transition-colors text-xs"
-                  >
-                    Download
-                  </button>
-                  <button
-                    onClick={deploy}
-                    disabled={deploying || !!liveUrl}
-                    className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 transition-colors text-xs flex items-center gap-1.5"
-                  >
-                    {deploying ? (
-                      <>
-                        <Spinner />
-                        Deploying
-                      </>
-                    ) : liveUrl ? (
-                      "Deployed"
-                    ) : (
-                      "Deploy to live URL"
-                    )}
-                  </button>
-                </div>
-              </div>
 
-              {/* Live URL banner — shows after a successful deploy */}
-              {liveUrl && (
-                <div className="px-5 py-3 border-b border-zinc-200 bg-green-50 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-4 h-4 text-green-600 flex-shrink-0">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span className="text-sm text-green-800 font-medium">Live at</span>
+                {liveUrl && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="px-4 sm:px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-green-50 dark:bg-green-950/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
+                      <CheckIcon className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                      <span className="text-sm text-green-800 dark:text-green-300 font-medium flex-shrink-0">Live at</span>
+                      <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-green-700 dark:text-green-400 underline truncate">
+                        {liveUrl.replace(/^https?:\/\//, "")}
+                      </a>
+                    </div>
                     <a
                       href={liveUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm text-green-700 underline truncate"
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors text-xs whitespace-nowrap min-h-[36px] flex items-center"
                     >
-                      {liveUrl.replace(/^https?:\/\//, "")}
+                      Open site
                     </a>
-                  </div>
-                  <a
-                    href={liveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 transition-colors text-xs whitespace-nowrap"
-                  >
-                    Open site
-                  </a>
-                </div>
-              )}
-
-              {deployError && (
-                <div className="px-5 py-3 border-b border-zinc-200 bg-red-50 text-red-800 text-sm">
-                  {deployError}
-                </div>
-              )}
-
-              <iframe
-                srcDoc={result.html}
-                title={`${result.business_name} preview`}
-                className="w-full h-[800px] border-0 bg-white"
-                sandbox="allow-scripts"
-              />
-
-              {/* Refine panel */}
-              <div className="p-5 border-t border-zinc-200 bg-zinc-50">
-                <div className="flex items-center gap-2 mb-2">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-4 h-4 text-indigo-600"
-                  >
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-                  </svg>
-                  <h3 className="text-sm font-semibold text-zinc-900">
-                    Refine the site
-                  </h3>
-                </div>
-                <p className="text-xs text-zinc-600 mb-3">
-                  Tell Sitebloom what to change in plain English. Be specific.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={feedback}
-                    onChange={(e) => setFeedback(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !refining && feedback.trim()) {
-                        refineSite();
-                      }
-                    }}
-                    placeholder="e.g. make the hero darker; add a pricing section; punchier copy"
-                    disabled={refining}
-                    className="flex-1 px-4 py-3 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-sm bg-white"
-                  />
-                  <button
-                    onClick={refineSite}
-                    disabled={refining || !feedback.trim()}
-                    className="bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:bg-zinc-300 disabled:text-zinc-500 transition-colors whitespace-nowrap flex items-center justify-center gap-2 text-sm"
-                  >
-                    {refining ? (
-                      <>
-                        <Spinner />
-                        Refining
-                      </>
-                    ) : (
-                      "Refine"
-                    )}
-                  </button>
-                </div>
-
-                {refineError && (
-                  <p className="mt-2 text-sm text-red-700">{refineError}</p>
+                  </motion.div>
                 )}
 
-                {/* History of applied refinements */}
-                {refineHistory.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs text-zinc-500 mb-1.5">
-                      Applied so far ({refineHistory.length}):
-                    </p>
-                    <ul className="space-y-1">
-                      {refineHistory.map((f, i) => (
-                        <li
-                          key={i}
-                          className="text-xs text-zinc-700 flex items-start gap-2"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            className="w-3 h-3 text-green-600 flex-shrink-0 mt-0.5"
-                          >
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                          <span>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
+                <iframe
+                  srcDoc={result.pages[currentPageIdx]?.html ?? ""}
+                  title={`${result.business_name} preview - ${result.pages[currentPageIdx]?.name ?? ""}`}
+                  className="w-full h-[520px] sm:h-[640px] md:h-[800px] border-0 bg-white"
+                  sandbox="allow-scripts"
+                />
+
+                <div className="p-4 sm:p-5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-violet-600 dark:text-violet-400">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                    </svg>
+                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                      Refine the {result.pages[currentPageIdx]?.name ?? "page"}
+                    </h3>
                   </div>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3">
+                    Describe a change in plain English. Only the current page gets updated.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !refining && feedback.trim()) {
+                          refineCurrentPage();
+                        }
+                      }}
+                      placeholder="e.g. make the hero darker; add a pricing section; punchier copy"
+                      disabled={refining}
+                      className="flex-1 px-4 py-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-sm placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                    />
+                    <button
+                      onClick={refineCurrentPage}
+                      disabled={refining || !feedback.trim()}
+                      className="bg-violet-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-violet-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 transition-colors whitespace-nowrap flex items-center justify-center gap-2 text-sm"
+                    >
+                      {refining ? (
+                        <>
+                          <Spinner />
+                          Refining
+                        </>
+                      ) : (
+                        "Refine"
+                      )}
+                    </button>
+                  </div>
+
+                  {refineHistory.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
+                        Applied so far ({refineHistory.length}):
+                      </p>
+                      <ul className="space-y-1">
+                        {refineHistory.map((f, i) => (
+                          <li key={i} className="text-xs text-zinc-700 dark:text-zinc-300 flex items-start gap-2">
+                            <CheckIcon className="w-3 h-3 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </motion.section>
+            )}
+          </AnimatePresence>
+        </div>
       </main>
-
-      {/* ===== FOOTER ===== */}
-      <footer className="border-t border-zinc-200 mt-16 py-8 text-center text-xs text-zinc-500">
-        Sitebloom · AI-powered website generation
-      </footer>
     </div>
+  );
+}
+
+// Default export — wraps HomeContent in Suspense because useSearchParams
+// requires it in the App Router.
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="min-h-screen" />}>
+      <HomeContent />
+    </Suspense>
   );
 }
