@@ -8,11 +8,20 @@ import requests
 import yaml
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
+from db import get_client as get_supabase, list_scrape_results
+from scraper.firecrawl_service import (
+    scrape_niche as run_scrape_niche,
+    scrape_one as run_scrape_one,
+    get_active_jobs,
+    clear_finished_jobs,
+)
+from scraper.targets import SCRAPE_TARGETS, get_all_niches, total_target_count
 
 load_dotenv()
 
@@ -520,6 +529,110 @@ def root():
 @app.get("/api/hello")
 def hello():
     return {"message": "Backend is alive and connected.", "status": "ok"}
+
+
+# ============================================================
+# Admin endpoints — protected by ADMIN_SECRET header.
+# Used by the upcoming /admin/scraper dashboard (Phase 11.D).
+# ============================================================
+
+def require_admin(x_admin_secret: Optional[str] = Header(None, alias="X-Admin-Secret")):
+    expected = os.getenv("ADMIN_SECRET")
+    if not expected or expected == "PASTE_A_RANDOM_SECRET_HERE":
+        raise HTTPException(
+            status_code=503,
+            detail="Admin disabled — ADMIN_SECRET not set in backend/.env",
+        )
+    if x_admin_secret != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return True
+
+
+@app.get("/api/admin/db-health")
+def admin_db_health(_=Depends(require_admin)):
+    """Quick check that Supabase is reachable + tables exist."""
+    client = get_supabase()
+    if client is None:
+        return {"ok": False, "reason": "Supabase client not configured"}
+    try:
+        client.table("niche_patterns").select("id").limit(1).execute()
+        client.table("scrape_results").select("id").limit(1).execute()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+
+
+@app.get("/api/admin/niches")
+def admin_list_niches(_=Depends(require_admin)):
+    """List all niches with their target counts and recent scrape stats."""
+    niches = []
+    for niche in get_all_niches():
+        targets = SCRAPE_TARGETS[niche]
+        results = list_scrape_results(niche=niche)
+        scraped = sum(1 for r in results if r.get("status") in ("scraped", "analyzed"))
+        failed = sum(1 for r in results if r.get("status") == "failed")
+        niches.append({
+            "slug": niche,
+            "target_count": len(targets),
+            "scraped_count": scraped,
+            "failed_count": failed,
+        })
+    return {"niches": niches, "total_targets": total_target_count()}
+
+
+@app.get("/api/admin/scrape-status")
+def admin_scrape_status(_=Depends(require_admin)):
+    """In-progress jobs (in-memory) plus most-recent rows from scrape_results."""
+    jobs = get_active_jobs()
+    recent = list_scrape_results()[:30]
+    # Strip raw_content from the response — too big for an admin overview.
+    recent_summary = [
+        {
+            "url": r.get("url"),
+            "niche": r.get("niche"),
+            "status": r.get("status"),
+            "scraped_at": r.get("scraped_at"),
+            "error_message": r.get("error_message"),
+        }
+        for r in recent
+    ]
+    return {"active_jobs": jobs, "recent": recent_summary}
+
+
+@app.post("/api/admin/scrape-niche/{niche}")
+def admin_scrape_niche(
+    niche: str,
+    background_tasks: BackgroundTasks,
+    _=Depends(require_admin),
+):
+    """Kick off a background scrape job for an entire niche. Returns immediately."""
+    if niche not in SCRAPE_TARGETS:
+        raise HTTPException(status_code=404, detail=f"Unknown niche: {niche}")
+    background_tasks.add_task(run_scrape_niche, niche)
+    return {
+        "status": "started",
+        "niche": niche,
+        "target_count": len(SCRAPE_TARGETS[niche]),
+        "message": "Scraping in background. Poll /api/admin/scrape-status to track progress.",
+    }
+
+
+class ScrapeOneRequest(BaseModel):
+    url: str
+    niche: str
+
+
+@app.post("/api/admin/scrape-url")
+def admin_scrape_one(request: ScrapeOneRequest, _=Depends(require_admin)):
+    """Scrape a single URL synchronously. Useful for testing or one-offs."""
+    result = run_scrape_one(request.url, request.niche)
+    return result
+
+
+@app.post("/api/admin/clear-finished-jobs")
+def admin_clear_finished(_=Depends(require_admin)):
+    clear_finished_jobs()
+    return {"ok": True}
 
 
 # === BUILD: the main flow ===
