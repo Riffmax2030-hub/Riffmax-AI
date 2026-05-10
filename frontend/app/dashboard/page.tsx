@@ -1,5 +1,8 @@
 "use client";
 
+// /dashboard — main "Riffs" view. Linear-style: dense, minimal, dark-friendly.
+// Currently reads from localStorage; per-user Supabase data ships in Phase 13.B.
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,19 +13,23 @@ import {
   deleteFromHistory,
   clearHistory,
 } from "../../lib/history";
+import { useAuth } from "../../components/auth-provider";
+import { Sparkle } from "../../components/icons";
 
-function formatRelativeTime(ms: number) {
-  const seconds = Math.floor((Date.now() - ms) / 1000);
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 2592000) return `${Math.floor(seconds / 86400)}d ago`;
+function formatRelative(ms: number) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 2592000) return `${Math.floor(s / 86400)}d ago`;
   return new Date(ms).toLocaleDateString();
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     setHistory(getHistory());
@@ -32,122 +39,163 @@ export default function DashboardPage() {
   function handleDelete(id: string) {
     deleteFromHistory(id);
     setHistory(getHistory());
-    toast.success("Removed from history");
+    toast.success("Removed");
   }
 
   function handleClearAll() {
-    if (!window.confirm("Delete all entries from your local history? This cannot be undone.")) return;
+    if (!window.confirm("Clear all local history?")) return;
     clearHistory();
     setHistory([]);
     toast.success("History cleared");
   }
 
+  const filtered = history.filter(
+    (e) =>
+      !filter ||
+      e.businessName.toLowerCase().includes(filter.toLowerCase()) ||
+      e.industry.toLowerCase().includes(filter.toLowerCase())
+  );
+
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 md:py-16">
-      <div className="flex items-end justify-between mb-8 gap-4 flex-wrap">
+    <div className="px-6 py-8 max-w-5xl">
+      {/* Header */}
+      <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-2">
-            Riff Studio
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50 tracking-tight">
+            Your Riffs
           </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Your recent builds. Stored locally on this device.
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            {user?.email && (
+              <>
+                Signed in as <span className="text-zinc-700 dark:text-zinc-300">{user.email}</span>
+                {" · "}
+              </>
+            )}
+            Stored locally. Cross-device sync ships next.
           </p>
         </div>
-        {history.length > 0 && (
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+        >
+          <Sparkle className="w-3.5 h-3.5" />
+          New Riff
+        </Link>
+      </div>
+
+      {/* Filter bar */}
+      {history.length > 0 && (
+        <div className="flex items-center gap-2 mb-4">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter Riffs..."
+            className="flex-1 max-w-xs px-3 py-1.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-md focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-sm placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+          />
           <button
             onClick={handleClearAll}
-            className="text-xs text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 transition-colors"
+            className="text-xs text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 px-2 py-1 transition-colors"
           >
             Clear all
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Empty state */}
       {hydrated && history.length === 0 && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 p-10 text-center"
+          className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-10 text-center"
         >
-          <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 mx-auto flex items-center justify-center mb-4">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-              <path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8L12 2z" />
-            </svg>
+          <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 mx-auto flex items-center justify-center mb-3">
+            <Sparkle className="w-5 h-5" />
           </div>
-          <h2 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">
-            No riffs yet
+          <h2 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-1 text-sm">
+            No Riffs yet
           </h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-5 max-w-sm mx-auto">
-            When you build a site on the home page, it&apos;ll show up here.
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+            Build your first site and it&apos;ll appear here.
           </p>
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+            className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
           >
             Start a Riff
           </Link>
         </motion.div>
       )}
 
-      {/* History list */}
-      <AnimatePresence>
-        {history.length > 0 && (
-          <motion.ul
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="space-y-3"
-          >
-            {history.map((entry) => (
-              <motion.li
-                key={entry.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 truncate">
-                    {entry.businessName}
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    <span>{entry.industry}</span>
-                    {entry.templateUsed && (
-                      <span className="text-violet-600 dark:text-violet-400">{entry.templateUsed}</span>
-                    )}
-                    <span>{entry.pageCount} pages</span>
-                    <span>{formatRelativeTime(entry.createdAt)}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {entry.liveUrl ? (
-                    <a
-                      href={entry.liveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-medium text-xs transition-colors"
-                    >
-                      Open live site
-                    </a>
-                  ) : (
-                    <span className="text-xs text-zinc-400 dark:text-zinc-600 italic">Not deployed</span>
-                  )}
-                  <button
-                    onClick={() => handleDelete(entry.id)}
-                    aria-label="Delete entry"
-                    className="text-zinc-400 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400 p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+      {/* Table */}
+      {filtered.length > 0 && (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-200 dark:border-zinc-800">
+              <tr className="text-left text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                <th className="px-4 py-2.5 font-medium">Name</th>
+                <th className="px-4 py-2.5 font-medium hidden sm:table-cell">Style</th>
+                <th className="px-4 py-2.5 font-medium hidden md:table-cell">Pages</th>
+                <th className="px-4 py-2.5 font-medium hidden md:table-cell">Created</th>
+                <th className="px-4 py-2.5 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <AnimatePresence>
+                {filtered.map((e) => (
+                  <motion.tr
+                    key={e.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="border-b border-zinc-100 dark:border-zinc-800 last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition-colors"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                </div>
-              </motion.li>
-            ))}
-          </motion.ul>
-        )}
-      </AnimatePresence>
+                    <td className="px-4 py-2.5">
+                      <p className="text-zinc-900 dark:text-zinc-50 font-medium truncate">
+                        {e.businessName}
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate sm:hidden">
+                        {e.industry}
+                      </p>
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400 hidden sm:table-cell">
+                      {e.templateUsed || "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400 hidden md:table-cell">
+                      {e.pageCount}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-500 hidden md:table-cell">
+                      {formatRelative(e.createdAt)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="inline-flex items-center gap-2">
+                        {e.liveUrl ? (
+                          <a
+                            href={e.liveUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-medium text-green-600 dark:text-green-400 hover:underline"
+                          >
+                            Open ↗
+                          </a>
+                        ) : (
+                          <span className="text-xs text-zinc-400 dark:text-zinc-600">draft</span>
+                        )}
+                        <button
+                          onClick={() => handleDelete(e.id)}
+                          className="text-xs text-zinc-400 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))}
+              </AnimatePresence>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

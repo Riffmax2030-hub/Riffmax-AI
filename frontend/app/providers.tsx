@@ -1,9 +1,10 @@
 "use client";
 
-// Client-side providers (theme). Wraps the app in layout.tsx.
+// Client-side providers (theme + auth). Wraps the app in layout.tsx.
 
 import { ThemeProvider } from "next-themes";
 import { ReactNode } from "react";
+import { AuthProvider } from "../components/auth-provider";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -13,7 +14,7 @@ export function Providers({ children }: { children: ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      {children}
+      <AuthProvider>{children}</AuthProvider>
     </ThemeProvider>
   );
 }

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
+import { useAuth } from "./auth-provider";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
@@ -87,6 +88,77 @@ function ThemeToggle() {
   );
 }
 
+function AuthButton() {
+  const { user, loading, signOut } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  if (loading) {
+    return <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse" />;
+  }
+
+  if (!user) {
+    return (
+      <Link
+        href="/login"
+        className="text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-50 px-3 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+      >
+        Sign in
+      </Link>
+    );
+  }
+
+  const initial = (user.email?.[0] || "?").toUpperCase();
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setMenuOpen(!menuOpen)}
+        className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-white text-xs font-semibold flex items-center justify-center hover:opacity-90 transition-opacity"
+        aria-label="User menu"
+      >
+        {initial}
+      </button>
+      <AnimatePresence>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.12 }}
+              className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg z-40 overflow-hidden"
+            >
+              <div className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800">
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Signed in as</p>
+                <p className="text-sm text-zinc-900 dark:text-zinc-50 truncate font-medium">
+                  {user.email}
+                </p>
+              </div>
+              <Link
+                href="/dashboard"
+                onClick={() => setMenuOpen(false)}
+                className="block px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              >
+                Dashboard
+              </Link>
+              <button
+                onClick={async () => {
+                  setMenuOpen(false);
+                  await signOut();
+                }}
+                className="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800"
+              >
+                Sign out
+              </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -130,6 +202,7 @@ export function SiteHeader() {
 
         <div className="flex items-center gap-2 flex-shrink-0">
           <ThemeToggle />
+          <AuthButton />
           <button
             onClick={() => setOpen(!open)}
             className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300"
