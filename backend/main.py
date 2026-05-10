@@ -287,6 +287,9 @@ Return ONLY a JSON object with these keys (use null if not specified):
 
 - "business_name": the business name
 - "industry": the type of business
+- "niche": classify into ONE of these exact slugs (or null if no clear fit):
+  "saas", "law_firm", "restaurant", "fintech", "social_media",
+  "dating_apps", "ecommerce", "portfolio"
 - "target_audience": who the site is for (a phrase)
 - "key_features": comma-separated features to highlight
 - "tone": one of these exact strings or null:
@@ -759,7 +762,8 @@ def build(request: BuildRequest):
     user_prompt = build_user_prompt(parsed, request.reference_url, reference_pages)
 
     # Compose the system prompt. Skill (industry copy patterns) and Template
-    # (visual layout style) are orthogonal — both can apply.
+    # (visual layout style) are orthogonal — both can apply. Plus niche
+    # patterns from Phase 11 (data-backed learnings from real scraped sites).
     full_system = BUILD_SYSTEM_PROMPT
 
     template_meta = TEMPLATES.get(request.template) if request.template else None
@@ -776,6 +780,15 @@ def build(request: BuildRequest):
             "\n\n## INDUSTRY-SPECIFIC PATTERNS\n\nApply the following patterns:\n\n"
             + skill_body
         )
+
+    # Niche patterns — data-backed insights from analyzed top sites.
+    niche_slug = parsed.get("niche")
+    niche_used: Optional[str] = None
+    if niche_slug:
+        niche_pattern = get_niche_pattern(niche_slug)
+        if niche_pattern:
+            full_system += format_niche_pattern_for_prompt(niche_slug, niche_pattern)
+            niche_used = niche_slug
 
     try:
         response = anthropic_client.messages.create(
@@ -803,18 +816,96 @@ def build(request: BuildRequest):
         p["html"] = new_html
         total_images += n
 
+    # Build the user-facing reference brief — what Riffmax extracted from the
+    # site they admire. Frontend renders this in the "Site Analysis" card.
+    reference_brief = {
+        "url": request.reference_url,
+        "pages_analyzed": len(reference_pages),
+        "pages": [
+            {
+                "slug": p["slug"],
+                "name": p["name"],
+                "hero_headline": p.get("hero_headline"),
+                "section_count": len(p.get("section_headings", [])),
+                "section_flow": p.get("section_headings", [])[:6],
+            }
+            for p in reference_pages
+        ],
+        "total_sections": sum(len(p.get("section_headings", [])) for p in reference_pages),
+    }
+
     return {
         "business_name": parsed.get("business_name") or "Untitled",
         "industry": parsed.get("industry") or "general",
         "reference_url": request.reference_url,
         "reference_pages_found": [p["slug"] for p in reference_pages],
+        "reference_brief": reference_brief,
         "pages": pages,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
         "skill_used": skill_name,
         "template_used": template_meta["name"] if template_meta else None,
+        "niche_used": niche_used,
         "images_added": total_images,
     }
+
+
+def format_niche_pattern_for_prompt(niche: str, pattern: dict) -> str:
+    """Turn a niche_patterns row into prose Claude can use in the system prompt."""
+    lines = [
+        "\n\n## DATA-BACKED NICHE PATTERNS",
+        "",
+        f"Riffmax analyzed {pattern.get('sites_analyzed', '?')} top {niche} sites and "
+        f"found these proven patterns. Apply them when designing this site.",
+        "",
+    ]
+
+    headlines = pattern.get("top_headlines") or []
+    if headlines:
+        lines.append("PROVEN HEADLINE STYLES (write originals in this voice):")
+        for h in headlines[:8]:
+            lines.append(f"  • {h}")
+        lines.append("")
+
+    ctas = pattern.get("top_cta_texts") or []
+    if ctas:
+        lines.append("PROVEN CTA TEXTS (write originals like these):")
+        for c in ctas[:8]:
+            lines.append(f"  • {c}")
+        lines.append("")
+
+    sections = pattern.get("recommended_sections") or []
+    if sections:
+        lines.append(f"LAYOUT PATTERNS THAT WORK: {', '.join(sections)}")
+        lines.append("")
+
+    color_recs = pattern.get("color_recommendations") or {}
+    top_moods = color_recs.get("top_moods") if isinstance(color_recs, dict) else None
+    if top_moods:
+        lines.append(f"COLOR MOODS THAT WORK: {', '.join(top_moods)}")
+        lines.append("")
+
+    tone = pattern.get("tone_profile")
+    if tone:
+        lines.append(f"TONE TO MATCH: {tone}")
+        lines.append("")
+
+    pattern_data = pattern.get("pattern_data") or {}
+    trust = pattern_data.get("trust_signals") if isinstance(pattern_data, dict) else None
+    if trust:
+        lines.append("TRUST SIGNALS COMMONLY USED (include where appropriate):")
+        for t in trust[:8]:
+            lines.append(f"  • {t}")
+        lines.append("")
+
+    hooks = pattern_data.get("unique_hooks") if isinstance(pattern_data, dict) else None
+    if hooks:
+        lines.append("DISTINCTIVE HOOKS THE TOP SITES USE:")
+        for h in hooks[:5]:
+            lines.append(f"  • {h}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # === LIST TEMPLATES ===

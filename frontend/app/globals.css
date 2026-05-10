@@ -35,3 +35,49 @@ html.theme-transition *:after {
     color 0.15s ease, fill 0.15s ease, stroke 0.15s ease !important;
   transition-delay: 0 !important;
 }
+
+/* ===== Equalizer bars in the Riff brand mark ===== */
+@keyframes eq-bar-1 {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
+@keyframes eq-bar-2 {
+  0%, 100% { transform: scaleY(0.85); }
+  40% { transform: scaleY(0.35); }
+  80% { transform: scaleY(1); }
+}
+@keyframes eq-bar-3 {
+  0%, 100% { transform: scaleY(0.55); }
+  60% { transform: scaleY(0.95); }
+}
+.eq-bar-1 { animation: eq-bar-1 1.4s ease-in-out infinite; transform-origin: bottom; }
+.eq-bar-2 { animation: eq-bar-2 1.1s ease-in-out infinite 0.15s; transform-origin: bottom; }
+.eq-bar-3 { animation: eq-bar-3 1.7s ease-in-out infinite 0.3s; transform-origin: bottom; }
+
+/* ===== Aurora blob drift for the hero background ===== */
+@keyframes aurora-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%     { transform: translate3d(8%, 6%, 0) scale(1.12); }
+  66%     { transform: translate3d(-7%, -4%, 0) scale(0.95); }
+}
+@keyframes aurora-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%     { transform: translate3d(-10%, 8%, 0) scale(0.93); }
+  66%     { transform: translate3d(9%, -6%, 0) scale(1.06); }
+}
+@keyframes aurora-drift-3 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%     { transform: translate3d(7%, 11%, 0) scale(1.05); }
+  66%     { transform: translate3d(-12%, -7%, 0) scale(0.98); }
+}
+.aurora-blob-1 { animation: aurora-drift-1 22s ease-in-out infinite; will-change: transform; }
+.aurora-blob-2 { animation: aurora-drift-2 28s ease-in-out infinite; will-change: transform; }
+.aurora-blob-3 { animation: aurora-drift-3 35s ease-in-out infinite; will-change: transform; }
+
+/* Respect reduced-motion users — disable decorative animations */
+@media (prefers-reduced-motion: reduce) {
+  .eq-bar-1, .eq-bar-2, .eq-bar-3,
+  .aurora-blob-1, .aurora-blob-2, .aurora-blob-3 {
+    animation: none !important;
+  }
+}

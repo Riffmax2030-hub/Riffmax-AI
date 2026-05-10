@@ -19,16 +19,33 @@ type GeneratedPage = {
   html: string;
 };
 
+type ReferencePageBrief = {
+  slug: string;
+  name: string;
+  hero_headline: string | null;
+  section_count: number;
+  section_flow: string[];
+};
+
+type ReferenceBrief = {
+  url: string;
+  pages_analyzed: number;
+  pages: ReferencePageBrief[];
+  total_sections: number;
+};
+
 type BuildResult = {
   business_name: string;
   industry: string;
   reference_url: string;
   reference_pages_found: string[];
+  reference_brief: ReferenceBrief;
   pages: GeneratedPage[];
   input_tokens: number;
   output_tokens: number;
   skill_used: string | null;
   template_used: string | null;
+  niche_used: string | null;
   images_added: number;
 };
 
@@ -273,12 +290,15 @@ function HomeContent() {
 
   return (
     <div className="relative overflow-x-hidden">
-      {/* Hero glow — radial gradient behind the hero */}
+      {/* Aurora background — three drifting blurred gradient blobs that create
+          a "moving" backdrop similar to v0 / Bolt / Lovable landings. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[600px] overflow-hidden"
+        className="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[800px] overflow-hidden"
       >
-        <div className="absolute left-1/2 top-[-200px] h-[700px] w-[1100px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(124,58,237,0.18),rgba(79,70,229,0.08),transparent)] dark:bg-[radial-gradient(closest-side,rgba(124,58,237,0.35),rgba(79,70,229,0.18),transparent)] blur-3xl" />
+        <div className="aurora-blob-1 absolute left-1/4 -top-32 h-[520px] w-[520px] rounded-full bg-indigo-500/20 dark:bg-indigo-500/35 blur-3xl" />
+        <div className="aurora-blob-2 absolute right-1/4 -top-20 h-[480px] w-[480px] rounded-full bg-violet-500/25 dark:bg-violet-500/40 blur-3xl" />
+        <div className="aurora-blob-3 absolute left-1/2 top-32 h-[420px] w-[700px] -translate-x-1/2 rounded-full bg-fuchsia-500/15 dark:bg-fuchsia-500/30 blur-3xl" />
       </div>
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 pt-14 sm:pt-20 md:pt-24 pb-16">
@@ -485,13 +505,107 @@ function HomeContent() {
             {building && !result && <BuildSkeleton key="skeleton" />}
 
             {result && (
-              <motion.section
-                key="result"
+              <motion.div
+                key="bundle"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, ease: "easeOut" }}
-                className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-indigo-500/5 dark:shadow-violet-500/10 overflow-hidden"
+                className="space-y-4"
               >
+                {/* Site Analysis Summary — what we learned from the reference */}
+                <div className="bg-gradient-to-br from-violet-50 to-fuchsia-50 dark:from-violet-950/30 dark:to-fuchsia-950/20 rounded-2xl border border-violet-200 dark:border-violet-900 p-5 sm:p-6">
+                  <div className="flex items-start gap-3 mb-4">
+                    <div className="w-9 h-9 rounded-lg bg-violet-600 text-white flex items-center justify-center flex-shrink-0 shadow shadow-violet-500/30">
+                      <Sparkle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
+                        Site analysis summary
+                      </h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+                        What Riffmax learned from{" "}
+                        <a
+                          href={result.reference_brief.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-violet-600 dark:hover:text-violet-400 break-all"
+                        >
+                          {result.reference_brief.url.replace(/^https?:\/\//, "")}
+                        </a>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mb-5 text-center">
+                    <div className="bg-white/70 dark:bg-zinc-900/50 rounded-lg px-3 py-3">
+                      <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                        {result.reference_brief.pages_analyzed}
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        page{result.reference_brief.pages_analyzed !== 1 ? "s" : ""} analyzed
+                      </p>
+                    </div>
+                    <div className="bg-white/70 dark:bg-zinc-900/50 rounded-lg px-3 py-3">
+                      <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                        {result.reference_brief.total_sections}
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">total sections</p>
+                    </div>
+                    <div className="bg-white/70 dark:bg-zinc-900/50 rounded-lg px-3 py-3">
+                      <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                        {result.pages.length}
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        page{result.pages.length !== 1 ? "s" : ""} generated
+                      </p>
+                    </div>
+                  </div>
+
+                  <details className="group">
+                    <summary className="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-300 hover:text-violet-900 dark:hover:text-violet-100 inline-flex items-center gap-1 list-none">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="w-3 h-3 transition-transform group-open:rotate-90"
+                      >
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                      Show what we extracted from each page
+                    </summary>
+                    <div className="mt-3 space-y-3">
+                      {result.reference_brief.pages.map((p) => (
+                        <div
+                          key={p.slug}
+                          className="bg-white/70 dark:bg-zinc-900/50 rounded-lg p-3"
+                        >
+                          <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-50 mb-1">
+                            {p.name}{" "}
+                            <span className="text-zinc-400 dark:text-zinc-600 font-normal">
+                              · {p.section_count} sections
+                            </span>
+                          </p>
+                          {p.hero_headline && (
+                            <p className="text-sm text-zinc-700 dark:text-zinc-300 italic mb-2 line-clamp-2">
+                              &quot;{p.hero_headline}&quot;
+                            </p>
+                          )}
+                          {p.section_flow.length > 0 && (
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2">
+                              Flow: {p.section_flow.join(" → ")}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+
+                {/* Result preview */}
+                <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-indigo-500/5 dark:shadow-violet-500/10 overflow-hidden">
                 <div className="px-4 sm:px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
                   <div className="flex items-center justify-between gap-2 sm:gap-3">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -506,6 +620,11 @@ function HomeContent() {
                       {result.template_used && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 font-medium hidden sm:inline-block flex-shrink-0">
                           {result.template_used}
+                        </span>
+                      )}
+                      {result.niche_used && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-fuchsia-50 dark:bg-fuchsia-950/50 text-fuchsia-700 dark:text-fuchsia-300 font-medium hidden md:inline-block flex-shrink-0" title="Niche pattern data injected">
+                          niche: {result.niche_used}
                         </span>
                       )}
                       {result.skill_used && (
@@ -654,7 +773,8 @@ function HomeContent() {
                     </div>
                   )}
                 </div>
-              </motion.section>
+                </section>
+              </motion.div>
             )}
           </AnimatePresence>
         </div>
