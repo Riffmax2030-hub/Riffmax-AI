@@ -159,6 +159,9 @@ function AuthButton() {
   );
 }
 
+// Routes that should render fullscreen with no nav/footer chrome.
+const HIDE_CHROME_ROUTES = ["/login", "/signup"];
+
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -167,6 +170,11 @@ export function SiteHeader() {
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  // Auth pages get no header
+  if (HIDE_CHROME_ROUTES.includes(pathname)) {
+    return null;
+  }
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";

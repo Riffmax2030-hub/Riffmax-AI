@@ -7,6 +7,12 @@ import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { saveBuild, updateLiveUrl, type HistoryEntry } from "../lib/history";
+import {
+  getUsage,
+  incrementUsage,
+  isOverFreeLimit,
+  FREE_RIFF_LIMIT,
+} from "../lib/usage";
 import { TEMPLATES } from "../components/templates-data";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -89,7 +95,15 @@ function CheckIcon({ className = "" }: { className?: string }) {
   );
 }
 
-function BuildSkeleton() {
+const BUILD_STAGES = [
+  { label: "Mapping the reference site", hint: "Discovering pages with Firecrawl" },
+  { label: "Scraping key pages", hint: "Extracting structure and copy" },
+  { label: "Generating your pages", hint: "Claude is writing original content" },
+  { label: "Fetching photos", hint: "Adding real Unsplash imagery" },
+  { label: "Almost ready", hint: "Final touches" },
+];
+
+function BuildSkeleton({ stage }: { stage: number }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -105,16 +119,44 @@ function BuildSkeleton() {
         </div>
         <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
       </div>
-      <div className="h-[520px] sm:h-[640px] md:h-[800px] bg-gradient-to-br from-zinc-50 to-white dark:from-zinc-950 dark:to-zinc-900 flex flex-col items-center justify-center gap-3">
+      <div className="h-[520px] sm:h-[640px] md:h-[800px] bg-gradient-to-br from-zinc-50 to-white dark:from-zinc-950 dark:to-zinc-900 flex flex-col items-center justify-center gap-4 px-6">
         <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center shadow-md shadow-indigo-500/40">
           <Sparkle className="w-6 h-6 text-white animate-pulse" />
         </div>
-        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-          Riffmax is at work
-        </p>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 max-w-xs text-center">
-          Mapping your reference, scraping key pages, generating original pages, fetching photos.
-        </p>
+        <div className="text-center">
+          <motion.p
+            key={stage}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+          >
+            {BUILD_STAGES[stage]?.label || "Working"}
+          </motion.p>
+          <motion.p
+            key={`hint-${stage}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-xs text-zinc-500 dark:text-zinc-500 mt-1"
+          >
+            {BUILD_STAGES[stage]?.hint || ""}
+          </motion.p>
+        </div>
+
+        {/* Stepper dots */}
+        <div className="flex items-center gap-2 mt-2">
+          {BUILD_STAGES.map((_, i) => (
+            <div
+              key={i}
+              className={`h-1.5 rounded-full transition-all duration-500 ${
+                i === stage
+                  ? "w-8 bg-violet-500"
+                  : i < stage
+                  ? "w-1.5 bg-violet-400 dark:bg-violet-600"
+                  : "w-1.5 bg-zinc-300 dark:bg-zinc-700"
+              }`}
+            />
+          ))}
+        </div>
       </div>
     </motion.div>
   );
@@ -145,6 +187,9 @@ function HomeContent() {
   // Track the history entry id so we can update its liveUrl after deploy.
   const [historyEntryId, setHistoryEntryId] = useState<string | null>(null);
 
+  // Track which stage of the build pipeline we're showing in the skeleton.
+  const [buildStage, setBuildStage] = useState(0);
+
   // Apply ?template=slug from the URL on mount (lets the Templates page
   // and Dashboard pre-select a template by linking back here with a query).
   useEffect(() => {
@@ -154,8 +199,41 @@ function HomeContent() {
     }
   }, [searchParams]);
 
+  // While building, advance through stages on a timer so the user sees progress.
+  // Real backend streaming will replace this estimator in a future phase.
+  useEffect(() => {
+    if (!building) {
+      setBuildStage(0);
+      return;
+    }
+    setBuildStage(0);
+    // Approximate timing per stage (ms): 4s map, 12s scrape, 50s generate, 8s photos, hold on last
+    const stageDurations = [4000, 12000, 50000, 8000];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let cumulative = 0;
+    stageDurations.forEach((d, i) => {
+      cumulative += d;
+      timers.push(setTimeout(() => setBuildStage(i + 1), cumulative));
+    });
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, [building]);
+
   async function build() {
     if (!description.trim() || !referenceUrl.trim()) return;
+    // Free-tier gate (front-end). Backend gate ships once Supabase Riffs land.
+    if (isOverFreeLimit()) {
+      toast.error(
+        `You've used all ${FREE_RIFF_LIMIT} free Riffs this month. Upgrade to keep going.`,
+        {
+          action: {
+            label: "Upgrade",
+            onClick: () => (window.location.href = "/pricing"),
+          },
+          duration: 8000,
+        }
+      );
+      return;
+    }
     setBuilding(true);
     setResult(null);
     setRefineHistory([]);
@@ -179,7 +257,13 @@ function HomeContent() {
       }
       const data: BuildResult = await response.json();
       setResult(data);
-      toast.success(`Generated ${data.pages.length} pages for ${data.business_name}`);
+      // Increment free-tier counter only on success
+      const updated = incrementUsage();
+      const remaining = Math.max(0, FREE_RIFF_LIMIT - updated.count);
+      toast.success(
+        `Generated ${data.pages.length} pages for ${data.business_name}` +
+          (remaining > 0 ? ` · ${remaining} free Riffs left this month` : "")
+      );
 
       // Save to local history so /dashboard can show it.
       const entry: HistoryEntry = saveBuild({
@@ -502,7 +586,7 @@ function HomeContent() {
         {/* Skeleton OR Result */}
         <div id="result">
           <AnimatePresence mode="wait">
-            {building && !result && <BuildSkeleton key="skeleton" />}
+            {building && !result && <BuildSkeleton key="skeleton" stage={buildStage} />}
 
             {result && (
               <motion.div

@@ -67,7 +67,24 @@ function LoginInner() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-12rem)] flex items-center justify-center px-4">
+    <div className="h-screen w-screen fixed inset-0 overflow-hidden flex items-center justify-center px-4 bg-zinc-50 dark:bg-zinc-950">
+      {/* Subtle aurora background even on auth pages */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden -z-10">
+        <div className="aurora-blob-1 absolute left-1/4 top-1/4 h-[420px] w-[420px] rounded-full bg-violet-500/15 dark:bg-violet-500/30 blur-3xl" />
+        <div className="aurora-blob-2 absolute right-1/4 bottom-1/4 h-[420px] w-[420px] rounded-full bg-indigo-500/15 dark:bg-indigo-500/30 blur-3xl" />
+      </div>
+
+      <Link
+        href="/"
+        className="absolute top-6 left-6 flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-50 transition-colors"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+          <line x1="19" y1="12" x2="5" y2="12" />
+          <polyline points="12 19 5 12 12 5" />
+        </svg>
+        Back
+      </Link>
+
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -75,6 +92,9 @@ function LoginInner() {
         className="w-full max-w-sm"
       >
         <div className="text-center mb-7">
+          <div className="w-10 h-10 mx-auto mb-4 bg-gradient-to-br from-fuchsia-500 via-violet-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-violet-500/30">
+            <span className="text-white font-extrabold text-base leading-none">R</span>
+          </div>
           <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mb-1">
             Sign in to Riff
           </h1>

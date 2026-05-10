@@ -1,8 +1,18 @@
-// Shared footer — small, subtle.
+// Shared footer — small, subtle. Hidden on auth routes.
+
+"use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const HIDE_CHROME_ROUTES = ["/login", "/signup"];
 
 export function SiteFooter() {
+  const pathname = usePathname();
+  if (HIDE_CHROME_ROUTES.includes(pathname)) {
+    return null;
+  }
+
   return (
     <footer className="border-t border-zinc-200 dark:border-zinc-800 mt-auto">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 dark:text-zinc-400">

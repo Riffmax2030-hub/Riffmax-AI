@@ -790,17 +790,34 @@ def build(request: BuildRequest):
             full_system += format_niche_pattern_for_prompt(niche_slug, niche_pattern)
             niche_used = niche_slug
 
+    # Use streaming + prompt caching for cost optimization:
+    # - max_tokens lowered from 24000 → 16000 (4 pages * 4000 tokens is plenty)
+    # - cache_control marks the system prompt as ephemeral-cached: subsequent
+    #   builds within 5 min reuse the cached version at ~10% the input cost
     try:
-        response = anthropic_client.messages.create(
+        text_content = ""
+        final_message = None
+        with anthropic_client.messages.stream(
             model="claude-sonnet-4-6",
-            max_tokens=24000,
-            system=full_system,
+            max_tokens=16000,
+            system=[
+                {
+                    "type": "text",
+                    "text": full_system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_prompt}],
-        )
+        ) as stream:
+            for text in stream.text_stream:
+                text_content += text
+            final_message = stream.get_final_message()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Claude error: {e}")
 
-    raw_text = response.content[0].text if response.content else ""
+    raw_text = text_content
+    input_tokens = final_message.usage.input_tokens if final_message else 0
+    output_tokens = final_message.usage.output_tokens if final_message else 0
 
     pages = parse_multi_page_output(raw_text)
     if not pages:
@@ -841,8 +858,8 @@ def build(request: BuildRequest):
         "reference_pages_found": [p["slug"] for p in reference_pages],
         "reference_brief": reference_brief,
         "pages": pages,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
         "skill_used": skill_name,
         "template_used": template_meta["name"] if template_meta else None,
         "niche_used": niche_used,
@@ -955,9 +972,11 @@ def refine(request: RefineRequest):
         f"Output the complete updated HTML."
     )
 
+    # Refine is surgical edits — Haiku does this well at ~10x lower cost than Sonnet.
+    # If you ever see refine quality drop, switch back to claude-sonnet-4-6.
     try:
         response = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=8000,
             system=REFINE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
