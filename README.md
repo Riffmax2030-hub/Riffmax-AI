@@ -1,4 +1,69 @@
-# Riffmax AI
+# RiffMax AI 🚀
+
+**AI-Powered Website Builder | Claude + Firecrawl Integration**
+
+Turn any website design into production-ready code using Claude AI and Firecrawl web scraping.
+
+## What It Does
+
+Users provide a website they like → RiffMax AI extracts the design/structure → Claude generates clean, responsive code → User gets a custom website.
+
+## Features
+
+✅ **Smart Design Extraction** - Firecrawl analyzes target websites  
+✅ **AI Code Generation** - Claude creates semantic, modern HTML/CSS/React  
+✅ **Responsive Design** - Mobile-first, TailwindCSS-optimized  
+✅ **Fast Deployment** - One-click Vercel deployment  
+✅ **Customization** - Users can tweak generated code  
+
+## Tech Stack
+
+- **Frontend:** React, Next.js, TailwindCSS
+- **Backend:** FastAPI, Python
+- **AI:** Claude API
+- **Web Scraping:** Firecrawl
+- **Deployment:** Vercel, Railway
+
+## Getting Started
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Riffmax2030-hub/Riffmax-AI.git
+cd Riffmax-AI
+
+# Install dependencies
+npm install
+pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Add your CLAUDE_API_KEY and FIRECRAWL_API_KEY
+```
+
+### Usage
+
+```bash
+# Run the application
+npm run dev
+python api.py
+```
+
+Visit `http://localhost:3000`
+
+## How It Works
+
+1. **Input:** User pastes a website URL or uploads a screenshot
+2. **Extraction:** Firecrawl extracts design elements, layout, colors
+3. **Generation:** Claude AI generates component-based React code
+4. **Preview:** User sees generated code in real-time editor
+5. **Deploy:** One-click deploy to Vercel
+
+## Project Structure
+
+
+
 
 > Website Riffing Powered by Claude
 
