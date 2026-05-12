@@ -699,8 +699,27 @@ class BuildRequest(BaseModel):
     template: Optional[str] = None  # one of TEMPLATES keys, or None
 
 
+def get_anthropic_for_request(user_key_header: Optional[str]) -> Optional[Anthropic]:
+    """Return the right Anthropic client for this request.
+
+    If the user passed a bring-your-own key header (X-User-Anthropic-Key),
+    instantiate a client with their key. Otherwise return the shared client
+    (which uses our backend's ANTHROPIC_API_KEY env var).
+    """
+    if user_key_header and user_key_header.startswith("sk-ant-"):
+        try:
+            return Anthropic(api_key=user_key_header)
+        except Exception as e:
+            print(f"BYO Anthropic key invalid: {e}")
+            return None
+    return anthropic_client
+
+
 @app.post("/api/build")
-def build(request: BuildRequest):
+def build(
+    request: BuildRequest,
+    x_user_anthropic_key: Optional[str] = Header(None, alias="X-User-Anthropic-Key"),
+):
     """Single-shot multi-page website build.
 
     1. Parse free-form description into structured fields (Haiku).
@@ -711,7 +730,9 @@ def build(request: BuildRequest):
     6. Replace UNSPLASH: placeholders with real photos.
     7. Return the bundle.
     """
-    if anthropic_client is None:
+    # Resolve which Anthropic client to use (shared or bring-your-own)
+    client = get_anthropic_for_request(x_user_anthropic_key)
+    if client is None:
         raise HTTPException(status_code=500, detail="Anthropic API key not configured.")
     if firecrawl_api_key is None:
         raise HTTPException(status_code=500, detail="Firecrawl API key not configured.")
@@ -797,7 +818,7 @@ def build(request: BuildRequest):
     try:
         text_content = ""
         final_message = None
-        with anthropic_client.messages.stream(
+        with client.messages.stream(
             model="claude-sonnet-4-6",
             max_tokens=16000,
             system=[
@@ -960,8 +981,12 @@ class RefineRequest(BaseModel):
 
 
 @app.post("/api/refine")
-def refine(request: RefineRequest):
-    if anthropic_client is None:
+def refine(
+    request: RefineRequest,
+    x_user_anthropic_key: Optional[str] = Header(None, alias="X-User-Anthropic-Key"),
+):
+    client = get_anthropic_for_request(x_user_anthropic_key)
+    if client is None:
         raise HTTPException(status_code=500, detail="Anthropic API key not configured.")
 
     user_prompt = (
@@ -975,7 +1000,7 @@ def refine(request: RefineRequest):
     # Refine is surgical edits — Haiku does this well at ~10x lower cost than Sonnet.
     # If you ever see refine quality drop, switch back to claude-sonnet-4-6.
     try:
-        response = anthropic_client.messages.create(
+        response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=8000,
             system=REFINE_SYSTEM_PROMPT,

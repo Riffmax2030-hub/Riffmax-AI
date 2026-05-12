@@ -49,12 +49,41 @@ create index if not exists scrape_results_status_idx on scrape_results (status);
 -- ============================================================
 -- Row Level Security (RLS)
 --
--- We're using the Supabase service-role key from the BACKEND only.
--- The service key bypasses RLS, so we can leave RLS off for both
--- tables. We just won't expose these tables to the anon/public key.
--- If you ever expose them client-side, turn RLS on with the
--- commented policies below as a starting point.
+-- niche_patterns + scrape_results are accessed via service-role key
+-- from the backend only — RLS off is fine.
+-- riffs is accessed by the FRONTEND with the anon key — RLS REQUIRED.
 -- ============================================================
--- alter table niche_patterns enable row level security;
--- alter table scrape_results enable row level security;
--- create policy "anon read niche_patterns" on niche_patterns for select using (true);
+
+-- ============================================================
+-- riffs — one row per user-generated website (Phase 13.B).
+-- Frontend writes via anon key + user JWT. RLS scopes everything
+-- to auth.uid() so a user only ever sees their own rows.
+-- ============================================================
+create table if not exists riffs (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid references auth.users(id) on delete cascade not null,
+  business_name   text not null,
+  industry        text,
+  template_used   text,
+  niche_used      text,
+  reference_url   text,
+  page_count      int  not null default 0,
+  live_url        text,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists riffs_user_id_idx    on riffs (user_id);
+create index if not exists riffs_created_at_idx on riffs (created_at desc);
+
+alter table riffs enable row level security;
+
+-- Drop existing policies so this script can be re-run safely.
+drop policy if exists "users read own riffs"    on riffs;
+drop policy if exists "users insert own riffs"  on riffs;
+drop policy if exists "users update own riffs"  on riffs;
+drop policy if exists "users delete own riffs"  on riffs;
+
+create policy "users read own riffs"   on riffs for select using (auth.uid() = user_id);
+create policy "users insert own riffs" on riffs for insert with check (auth.uid() = user_id);
+create policy "users update own riffs" on riffs for update using (auth.uid() = user_id);
+create policy "users delete own riffs" on riffs for delete using (auth.uid() = user_id);
