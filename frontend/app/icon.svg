@@ -1,15 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <defs>
     <linearGradient id="rg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#A855F7"/>
-      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="0%" stop-color="#EC4899"/>
+      <stop offset="50%" stop-color="#8B5CF6"/>
       <stop offset="100%" stop-color="#4F46E5"/>
     </linearGradient>
   </defs>
-  <rect width="32" height="32" rx="7" fill="url(#rg)"/>
-  <text x="9" y="22" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="18" font-weight="900" fill="white">R</text>
-  <!-- Sound wave bars (suggest the "riff") -->
-  <rect x="22" y="14" width="1.8" height="6" rx="0.9" fill="white" opacity="0.65"/>
-  <rect x="25" y="10" width="1.8" height="12" rx="0.9" fill="white" opacity="0.95"/>
-  <rect x="28" y="15" width="1.8" height="4" rx="0.9" fill="white" opacity="0.55"/>
+  <rect width="32" height="32" rx="8" fill="url(#rg)"/>
+  <!-- Five-bar audio wave: low-mid-high-mid-low — the Riff mark -->
+  <rect x="6"  y="13" width="2.5" height="6"  rx="1.25" fill="white" fill-opacity="0.7"/>
+  <rect x="11" y="9"  width="2.5" height="14" rx="1.25" fill="white"/>
+  <rect x="16" y="5"  width="2.5" height="22" rx="1.25" fill="white"/>
+  <rect x="21" y="9"  width="2.5" height="14" rx="1.25" fill="white"/>
+  <rect x="26" y="13" width="2.5" height="6"  rx="1.25" fill="white" fill-opacity="0.7"/>
 </svg>

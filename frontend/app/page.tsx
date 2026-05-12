@@ -7,13 +7,28 @@ import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { saveBuild, updateLiveUrl, type HistoryEntry } from "../lib/history";
+import { saveRiff, updateRiffLiveUrl } from "../lib/riffs";
+import { useAuth } from "../components/auth-provider";
 import {
-  getUsage,
-  incrementUsage,
-  isOverFreeLimit,
-  FREE_RIFF_LIMIT,
+  consumeCredits,
+  canAfford,
+  CREDITS,
+  getByoKey,
+  hasByoKey,
+  getCredits,
 } from "../lib/usage";
 import { TEMPLATES } from "../components/templates-data";
+import { MicIcon } from "../components/icons";
+
+// Browser SpeechRecognition typing — TS DOM lib doesn't ship this yet.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySpeechRecognition = any;
+declare global {
+  interface Window {
+    SpeechRecognition?: AnySpeechRecognition;
+    webkitSpeechRecognition?: AnySpeechRecognition;
+  }
+}
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -168,6 +183,7 @@ function BuildSkeleton({ stage }: { stage: number }) {
 // export wraps HomeContent in one.
 function HomeContent() {
   const searchParams = useSearchParams();
+  const { user } = useAuth();
 
   const [description, setDescription] = useState("");
   const [referenceUrl, setReferenceUrl] = useState("");
@@ -189,6 +205,9 @@ function HomeContent() {
 
   // Track which stage of the build pipeline we're showing in the skeleton.
   const [buildStage, setBuildStage] = useState(0);
+
+  // Voice-input state — Web Speech API listening flag.
+  const [listening, setListening] = useState(false);
 
   // Apply ?template=slug from the URL on mount (lets the Templates page
   // and Dashboard pre-select a template by linking back here with a query).
@@ -220,15 +239,14 @@ function HomeContent() {
 
   async function build() {
     if (!description.trim() || !referenceUrl.trim()) return;
-    // Free-tier gate (front-end). Backend gate ships once Supabase Riffs land.
-    if (isOverFreeLimit()) {
+    const byo = hasByoKey();
+    // Credit gate — bypassed if user brings their own Anthropic key
+    if (!byo && !canAfford(CREDITS.BUILD)) {
+      const c = getCredits();
       toast.error(
-        `You've used all ${FREE_RIFF_LIMIT} free Riffs this month. Upgrade to keep going.`,
+        `Not enough credits (${c.remaining} left, need ${CREDITS.BUILD}). Upgrade or bring your own key.`,
         {
-          action: {
-            label: "Upgrade",
-            onClick: () => (window.location.href = "/pricing"),
-          },
+          action: { label: "Pricing", onClick: () => (window.location.href = "/pricing") },
           duration: 8000,
         }
       );
@@ -242,9 +260,13 @@ function HomeContent() {
     setCurrentPageIdx(0);
     setHistoryEntryId(null);
     try {
+      const byoKey = getByoKey();
       const response = await fetch(`${API_URL}/api/build`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(byoKey ? { "X-User-Anthropic-Key": byoKey } : {}),
+        },
         body: JSON.stringify({
           description,
           reference_url: referenceUrl,
@@ -257,23 +279,39 @@ function HomeContent() {
       }
       const data: BuildResult = await response.json();
       setResult(data);
-      // Increment free-tier counter only on success
-      const updated = incrementUsage();
-      const remaining = Math.max(0, FREE_RIFF_LIMIT - updated.count);
-      toast.success(
-        `Generated ${data.pages.length} pages for ${data.business_name}` +
-          (remaining > 0 ? ` · ${remaining} free Riffs left this month` : "")
-      );
+      // Consume credits only on success (skip if user brought their own key)
+      if (!byo) {
+        const result = consumeCredits(CREDITS.BUILD);
+        toast.success(
+          `Generated ${data.pages.length} pages · ${result.remaining} credits left`
+        );
+      } else {
+        toast.success(
+          `Generated ${data.pages.length} pages · billed to your Anthropic key`
+        );
+      }
 
-      // Save to local history so /dashboard can show it.
-      const entry: HistoryEntry = saveBuild({
-        businessName: data.business_name,
-        industry: data.industry,
-        templateUsed: data.template_used,
-        pageCount: data.pages.length,
-        liveUrl: null,
-      });
-      setHistoryEntryId(entry.id);
+      // Persist the Riff. If logged in → Supabase (cross-device). Else → localStorage.
+      if (user) {
+        const row = await saveRiff({
+          business_name: data.business_name,
+          industry: data.industry,
+          template_used: data.template_used,
+          niche_used: data.niche_used,
+          reference_url: data.reference_url,
+          page_count: data.pages.length,
+        });
+        setHistoryEntryId(row?.id ?? null);
+      } else {
+        const entry: HistoryEntry = saveBuild({
+          businessName: data.business_name,
+          industry: data.industry,
+          templateUsed: data.template_used,
+          pageCount: data.pages.length,
+          liveUrl: null,
+        });
+        setHistoryEntryId(entry.id);
+      }
 
       setTimeout(() => {
         document.getElementById("result")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -291,9 +329,13 @@ function HomeContent() {
     setRefining(true);
     try {
       const currentPage = result.pages[currentPageIdx];
+      const byoKey = getByoKey();
       const response = await fetch(`${API_URL}/api/refine`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(byoKey ? { "X-User-Anthropic-Key": byoKey } : {}),
+        },
         body: JSON.stringify({
           business_name: result.business_name,
           current_html: currentPage.html,
@@ -339,9 +381,14 @@ function HomeContent() {
       }
       const data = await response.json();
       setLiveUrl(data.live_url);
-      // Mirror the live URL into the matching history entry (if we have one)
+      // Mirror the live URL into the matching history entry — Supabase if user
+      // is logged in (the riff row id was saved in historyEntryId), else local.
       if (historyEntryId) {
-        updateLiveUrl(historyEntryId, data.live_url);
+        if (user) {
+          await updateRiffLiveUrl(historyEntryId, data.live_url);
+        } else {
+          updateLiveUrl(historyEntryId, data.live_url);
+        }
       }
       toast.success("Site deployed live!");
     } catch (err) {
@@ -366,10 +413,58 @@ function HomeContent() {
 
   function applyExample(prompt: string) {
     setDescription(prompt);
-    // focus the textarea so the user can edit
     setTimeout(() => {
       document.getElementById("description-input")?.focus();
     }, 0);
+  }
+
+  // Voice input — Web Speech API. Chrome/Edge/Safari support it.
+  function startVoice() {
+    if (typeof window === "undefined") return;
+    const Recognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      toast.error("Voice input isn't supported in this browser. Try Chrome or Safari.");
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    let finalTranscript = "";
+
+    recognition.onstart = () => setListening(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      // Show live transcription in the textarea
+      setDescription((finalTranscript + interim).trim());
+    };
+    recognition.onend = () => setListening(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (event: any) => {
+      setListening(false);
+      if (event.error === "not-allowed") {
+        toast.error("Microphone permission denied");
+      } else if (event.error !== "aborted") {
+        toast.error(`Voice error: ${event.error}`);
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
   }
 
   return (
@@ -386,147 +481,126 @@ function HomeContent() {
       </div>
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 pt-14 sm:pt-20 md:pt-24 pb-16">
-        {/* Hero */}
+        {/* Hero — minimal, three beats, one promise */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
           className="text-center mb-10"
         >
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/60 dark:bg-zinc-900/60 backdrop-blur border border-zinc-200/70 dark:border-zinc-800/70 text-zinc-700 dark:text-zinc-300 text-xs font-medium rounded-full mb-5 shadow-sm">
+          <a
+            href="/dashboard/settings"
+            className="inline-flex items-center gap-1.5 px-3 py-1 mb-5 bg-white/60 dark:bg-zinc-900/60 backdrop-blur border border-zinc-200/70 dark:border-zinc-800/70 text-zinc-700 dark:text-zinc-300 text-xs font-medium rounded-full shadow-sm hover:border-violet-400 dark:hover:border-violet-700 transition-colors"
+          >
             <Sparkle className="w-3 h-3 text-violet-500" />
-            Powered by Claude + Firecrawl
-          </div>
-          <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-4 leading-[1.05]">
-            Riff off any site.
-            <br />
-            <span className="bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 bg-clip-text text-transparent">
-              Ship something original.
-            </span>
+            Trained on 68+ top sites · The Riff Engine
+          </a>
+          <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-4 leading-[1]">
+            Describe it.{" "}
+            <span className="bg-gradient-to-r from-fuchsia-500 via-violet-500 to-indigo-500 bg-clip-text text-transparent">
+              Riff it.
+            </span>{" "}
+            Ship it.
           </h1>
-          <p className="text-base sm:text-lg text-zinc-600 dark:text-zinc-400 max-w-xl mx-auto">
-            Tell Riffmax AI what you want. We&apos;ll riff off a site you admire and build
-            you something new — multi-page, original, ready to ship.
+          <p className="text-base sm:text-lg text-zinc-600 dark:text-zinc-400">
+            Multi-page websites in seconds.
           </p>
         </motion.div>
 
-        {/* AI agent box */}
+        {/* Prompt card — minimal, mic-enabled */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
-          className="bg-white dark:bg-zinc-900 rounded-2xl sm:rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-2xl shadow-indigo-500/5 dark:shadow-violet-500/10 p-5 sm:p-6 md:p-8 mb-8"
+          className="bg-white dark:bg-zinc-900 rounded-2xl sm:rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-2xl shadow-violet-500/10 dark:shadow-violet-500/15 p-3 sm:p-4 mb-6"
         >
-          <div className="flex items-center gap-3 mb-6">
-            <div className="relative">
-              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-full flex items-center justify-center shadow-md shadow-indigo-500/40">
-                <Sparkle className="w-5 h-5 text-white" />
-              </div>
-              <span
-                className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-white dark:border-zinc-900 rounded-full ${
-                  building ? "bg-amber-500 animate-pulse" : "bg-green-500"
-                }`}
-              />
-            </div>
-            <div>
-              <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">Riffmax AI</h2>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                {building ? "Riffing — mapping, scraping, generating..." : "Online · ready to riff"}
-              </p>
-            </div>
+          {/* Description with voice button */}
+          <div className="relative">
+            <textarea
+              id="description-input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What do you want to build?"
+              rows={3}
+              disabled={building}
+              className="w-full px-4 py-3 pr-14 bg-transparent text-zinc-900 dark:text-zinc-100 rounded-xl focus:outline-none resize-none text-base leading-relaxed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            />
+            <button
+              type="button"
+              onClick={listening ? undefined : startVoice}
+              disabled={building}
+              aria-label={listening ? "Listening" : "Voice input"}
+              className={`absolute top-3 right-3 w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
+                listening
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "text-zinc-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+              }`}
+            >
+              <MicIcon className="w-4 h-4" />
+            </button>
           </div>
 
-          <label htmlFor="description-input" className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-            Tell me what you want to build
-          </label>
-          <textarea
-            id="description-input"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="A specialty coffee shop in Lagos called Olaide Coffee Roasters. Target young creatives, bold and playful tone."
-            rows={4}
-            disabled={building}
-            className="w-full px-4 py-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition resize-none text-sm leading-relaxed mb-5 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
-          />
-
-          <label className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-            Riff off this site
-            <span className="ml-2 font-normal text-xs text-zinc-500 dark:text-zinc-400">
-              (we&apos;ll learn from it, not copy it)
-            </span>
-          </label>
-          <input
-            type="url"
-            value={referenceUrl}
-            onChange={(e) => setReferenceUrl(e.target.value)}
-            placeholder="https://example.com"
-            disabled={building}
-            className="w-full px-4 py-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-sm mb-5 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
-          />
-
-          {/* Selected template chip (if any) */}
-          {selectedTemplate && (
-            <div className="mb-5 flex items-center justify-between px-4 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-900">
-              <div className="flex items-center gap-2 text-sm">
-                <CheckIcon className="w-4 h-4 text-violet-600 dark:text-violet-400 flex-shrink-0" />
-                <span className="text-zinc-700 dark:text-zinc-300">
-                  Style: <strong className="text-violet-700 dark:text-violet-300">
-                    {TEMPLATES.find((t) => t.slug === selectedTemplate)?.name}
-                  </strong>
-                </span>
-              </div>
+          {/* Reference URL row + selected template + Riff button */}
+          <div className="flex items-center gap-2 px-2 pb-2 pt-1 border-t border-zinc-100 dark:border-zinc-800">
+            <input
+              type="url"
+              value={referenceUrl}
+              onChange={(e) => setReferenceUrl(e.target.value)}
+              placeholder="↗ Paste a reference URL"
+              disabled={building}
+              className="flex-1 min-w-0 bg-transparent px-2 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            />
+            {selectedTemplate && (
               <button
                 onClick={() => setSelectedTemplate(null)}
-                className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
-                aria-label="Clear template"
+                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 text-xs font-medium hover:opacity-80 transition-opacity"
+                title="Clear template"
               >
-                Clear
+                {TEMPLATES.find((t) => t.slug === selectedTemplate)?.name}
+                <span className="text-violet-400">×</span>
               </button>
-            </div>
-          )}
-
-          <button
-            onClick={build}
-            disabled={building || !description.trim() || !referenceUrl.trim()}
-            className="group w-full bg-gradient-to-br from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-4 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 dark:shadow-violet-500/30"
-          >
-            {building ? (
-              <>
-                <Spinner />
-                <span className="hidden sm:inline">Riffing your website... (30–60 seconds)</span>
-                <span className="sm:hidden">Riffing... (30–60s)</span>
-              </>
-            ) : (
-              <>
-                <Sparkle className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                Start a Riff
-              </>
             )}
-          </button>
+            <button
+              onClick={build}
+              disabled={building || !description.trim() || !referenceUrl.trim()}
+              className="group bg-gradient-to-br from-fuchsia-600 to-violet-600 hover:from-fuchsia-500 hover:to-violet-500 text-white px-4 sm:px-5 py-2 rounded-lg font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-500/30 text-sm whitespace-nowrap"
+            >
+              {building ? (
+                <>
+                  <Spinner />
+                  Riffing
+                </>
+              ) : (
+                <>
+                  Riff
+                  <Sparkle className="w-3.5 h-3.5 group-hover:rotate-12 transition-transform" />
+                </>
+              )}
+            </button>
+          </div>
         </motion.div>
 
-        {/* Example prompt chips */}
+        {/* Example chips — minimal, just first words */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="mb-16"
+          className="mb-16 flex flex-wrap justify-center gap-2"
         >
-          <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 text-center">
-            Try one of these
-          </p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {EXAMPLE_PROMPTS.map((p, i) => (
+          {EXAMPLE_PROMPTS.map((p, i) => {
+            // Pull just a 3-word summary as the chip label
+            const label = p.split(/[.,]/)[0].split(" ").slice(0, 4).join(" ");
+            return (
               <button
                 key={i}
                 onClick={() => applyExample(p)}
-                className="text-xs px-3 py-2 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-violet-400 dark:hover:border-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors max-w-[280px] truncate"
+                className="text-xs px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-violet-400 dark:hover:border-violet-600 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                 title={p}
               >
-                {p.split(".")[0]}
+                {label}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </motion.div>
 
         {/* Templates section */}
@@ -538,12 +612,9 @@ function HomeContent() {
           className="mb-16"
         >
           <div className="text-center mb-8">
-            <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight mb-2">
-              Or start from a style
+            <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">
+              Pick a style
             </h2>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Six battle-tested templates. Click one to apply, then describe your business above.
-            </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
             {TEMPLATES.map((t) => {

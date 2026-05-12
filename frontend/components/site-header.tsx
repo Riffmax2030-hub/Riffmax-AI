@@ -18,17 +18,17 @@ const NAV_LINKS = [
 ];
 
 function BrandMark() {
-  // Riff brand mark — bold "R" plus three animated equalizer bars suggesting a
-  // live music riff. The CSS keyframes (eq-bar-1/2/3) live in globals.css.
+  // Riff mark — five animated equalizer bars on a gradient square. No letter.
+  // The wave IS the brand. Bars pulse via globals.css `eq-bar-1/2/3` keyframes
+  // (3 keyframes alternate across the 5 bars).
   return (
     <div className="w-9 h-9 bg-gradient-to-br from-fuchsia-500 via-violet-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-violet-500/30 relative overflow-hidden">
-      <span className="text-white font-extrabold text-base leading-none -translate-x-[5px]">
-        R
-      </span>
-      <div className="absolute right-1.5 flex items-end gap-[2px] h-[14px]">
-        <span className="eq-bar-1 w-[2px] h-full rounded-full bg-white/80" />
-        <span className="eq-bar-2 w-[2px] h-full rounded-full bg-white" />
-        <span className="eq-bar-3 w-[2px] h-full rounded-full bg-white/70" />
+      <div className="flex items-center gap-[2px] h-[18px]">
+        <span className="eq-bar-1 w-[2px] h-[60%] self-end rounded-full bg-white/80" />
+        <span className="eq-bar-2 w-[2px] h-[80%] self-end rounded-full bg-white" />
+        <span className="eq-bar-3 w-[2px] h-full   self-end rounded-full bg-white" />
+        <span className="eq-bar-1 w-[2px] h-[80%] self-end rounded-full bg-white" />
+        <span className="eq-bar-2 w-[2px] h-[60%] self-end rounded-full bg-white/80" />
       </div>
     </div>
   );
