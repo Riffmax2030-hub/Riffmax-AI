@@ -21,12 +21,35 @@ import { TEMPLATES } from "../components/templates-data";
 import { MicIcon } from "../components/icons";
 
 // Browser SpeechRecognition typing — TS DOM lib doesn't ship this yet.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnySpeechRecognition = any;
+// We define minimal shapes for the events we actually use.
+type SpeechRecognitionResultItem = { transcript: string };
+type SpeechRecognitionResult = ArrayLike<SpeechRecognitionResultItem> & {
+  isFinal: boolean;
+};
+type SpeechRecognitionEvent = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResult>;
+};
+type SpeechRecognitionErrorEvent = { error: string };
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
 declare global {
   interface Window {
-    SpeechRecognition?: AnySpeechRecognition;
-    webkitSpeechRecognition?: AnySpeechRecognition;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
 }
 
@@ -435,23 +458,21 @@ function HomeContent() {
     let finalTranscript = "";
 
     recognition.onstart = () => setListening(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if (result.isFinal) {
           finalTranscript += transcript;
         } else {
           interim += transcript;
         }
       }
-      // Show live transcription in the textarea
       setDescription((finalTranscript + interim).trim());
     };
     recognition.onend = () => setListening(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       setListening(false);
       if (event.error === "not-allowed") {
         toast.error("Microphone permission denied");
