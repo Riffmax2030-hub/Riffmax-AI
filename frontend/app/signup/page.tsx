@@ -8,7 +8,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { createClient } from "../../lib/supabase/client";
-import { Spinner, MailIcon, LockIcon } from "../../components/icons";
+import {
+  Spinner,
+  MailIcon,
+  LockIcon,
+  GoogleIcon,
+  GitHubIcon,
+} from "../../components/icons";
 
 function SignupInner() {
   const router = useRouter();
@@ -19,6 +25,21 @@ function SignupInner() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmSent, setConfirmSent] = useState(false);
+
+  async function signInWithProvider(provider: "google" | "github") {
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}${redirectTo}`,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `${provider} sign-up failed`);
+    }
+  }
 
   async function signUp() {
     if (!email.trim() || !password) return;
@@ -83,6 +104,33 @@ function SignupInner() {
         </div>
 
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-sm">
+          {!confirmSent && (
+            <>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button
+                  onClick={() => signInWithProvider("google")}
+                  disabled={submitting}
+                  className="flex items-center justify-center gap-2 px-3 py-2.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-sm font-medium disabled:opacity-50"
+                >
+                  <GoogleIcon className="w-4 h-4" />
+                  Google
+                </button>
+                <button
+                  onClick={() => signInWithProvider("github")}
+                  disabled={submitting}
+                  className="flex items-center justify-center gap-2 px-3 py-2.5 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-sm font-medium disabled:opacity-50"
+                >
+                  <GitHubIcon className="w-4 h-4" />
+                  GitHub
+                </button>
+              </div>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                <span className="text-xs text-zinc-400 dark:text-zinc-600">or with email</span>
+                <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+            </>
+          )}
           {confirmSent ? (
             <div className="text-center py-4">
               <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 flex items-center justify-center mx-auto mb-3">
