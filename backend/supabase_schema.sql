@@ -87,3 +87,31 @@ create policy "users read own riffs"   on riffs for select using (auth.uid() = u
 create policy "users insert own riffs" on riffs for insert with check (auth.uid() = user_id);
 create policy "users update own riffs" on riffs for update using (auth.uid() = user_id);
 create policy "users delete own riffs" on riffs for delete using (auth.uid() = user_id);
+
+-- ============================================================
+-- subscriptions — one row per active Paystack subscription per user.
+-- Updated by Paystack webhooks (Phase 18.B).
+-- Frontend reads to gate Pro features. RLS scopes to owner.
+-- ============================================================
+create table if not exists subscriptions (
+  id                       uuid primary key default gen_random_uuid(),
+  user_id                  uuid references auth.users(id) on delete cascade not null,
+  paystack_customer_code   text,
+  paystack_subscription_code text,
+  plan_code                text,                  -- e.g. "PLN_xxx" from Paystack
+  plan_name                text,                  -- "hobby" | "pro" | "agency"
+  status                   text not null default 'pending',  -- pending | active | cancelled | expired
+  current_period_start     timestamptz,
+  current_period_end       timestamptz,
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+
+create unique index if not exists subscriptions_user_idx on subscriptions (user_id);
+
+alter table subscriptions enable row level security;
+
+drop policy if exists "users read own subscription" on subscriptions;
+create policy "users read own subscription" on subscriptions
+  for select using (auth.uid() = user_id);
+-- Inserts/updates happen via service-role from backend webhook only.

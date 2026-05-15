@@ -15,6 +15,18 @@ from dotenv import load_dotenv
 from anthropic import Anthropic
 
 from db import get_client as get_supabase, list_scrape_results, get_niche_pattern
+
+# Paystack config (Phase 18 — billing)
+paystack_secret_key = os.getenv("PAYSTACK_SECRET_KEY")
+if not paystack_secret_key or paystack_secret_key == "PASTE_YOUR_SECRET_KEY_HERE":
+    print("WARNING: PAYSTACK_SECRET_KEY missing. Billing disabled.")
+    paystack_secret_key = None
+
+PAYSTACK_PLANS = {
+    "hobby":  os.getenv("PAYSTACK_PLAN_HOBBY",  ""),
+    "pro":    os.getenv("PAYSTACK_PLAN_PRO",    ""),
+    "agency": os.getenv("PAYSTACK_PLAN_AGENCY", ""),
+}
 from scraper.firecrawl_service import (
     scrape_niche as run_scrape_niche,
     scrape_one as run_scrape_one,
@@ -641,6 +653,85 @@ def admin_scrape_one(request: ScrapeOneRequest, _=Depends(require_admin)):
 def admin_clear_finished(_=Depends(require_admin)):
     clear_finished_jobs()
     return {"ok": True}
+
+
+# ===========================================================
+# BILLING — Paystack subscription init (Phase 18.A)
+# ===========================================================
+
+class BillingInitRequest(BaseModel):
+    plan: str        # "hobby" | "pro" | "agency"
+    email: str       # user's email (from Supabase auth on the frontend)
+    callback_url: str  # e.g. https://riffmax.ai/billing/success
+
+
+@app.post("/api/billing/initialize")
+def billing_initialize(request: BillingInitRequest):
+    """Create a Paystack subscription transaction and return its checkout URL.
+
+    Frontend calls this after user clicks "Upgrade to X". We init the
+    transaction with the chosen plan's code; Paystack returns a hosted
+    checkout URL we redirect the user to.
+    """
+    if paystack_secret_key is None:
+        raise HTTPException(status_code=500, detail="Paystack not configured.")
+
+    plan_code = PAYSTACK_PLANS.get(request.plan)
+    if not plan_code or plan_code.startswith("PLN_xxx"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan '{request.plan}' is not set up. Add PAYSTACK_PLAN_{request.plan.upper()} to backend env.",
+        )
+
+    try:
+        r = requests.post(
+            "https://api.paystack.co/transaction/initialize",
+            headers={
+                "Authorization": f"Bearer {paystack_secret_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "email": request.email,
+                "plan": plan_code,
+                "callback_url": request.callback_url,
+                # Paystack will calculate the amount from the plan; explicit
+                # amount field would override that, so we leave it out.
+            },
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Paystack request error: {e}")
+
+    if r.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Paystack returned {r.status_code}: {r.text[:300]}",
+        )
+
+    payload = r.json()
+    if not payload.get("status"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Paystack init failed: {payload.get('message', 'unknown')}",
+        )
+
+    data = payload.get("data", {})
+    return {
+        "authorization_url": data.get("authorization_url"),
+        "reference": data.get("reference"),
+        "access_code": data.get("access_code"),
+    }
+
+
+@app.get("/api/billing/plans")
+def billing_plans():
+    """List which plans are configured (for the frontend pricing page)."""
+    return {
+        "configured": {
+            slug: bool(code) and not code.startswith("PLN_xxx")
+            for slug, code in PAYSTACK_PLANS.items()
+        }
+    }
 
 
 # ---- Phase 11.C — analyze + aggregate ----
