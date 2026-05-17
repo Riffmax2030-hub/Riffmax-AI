@@ -27,6 +27,18 @@ PAYSTACK_PLANS = {
     "pro":    os.getenv("PAYSTACK_PLAN_PRO",    ""),
     "agency": os.getenv("PAYSTACK_PLAN_AGENCY", ""),
 }
+
+# Plan amounts in the SMALLEST currency unit (kobo for NGN, cents for USD).
+# These MUST match the amount you set when creating each plan in the Paystack
+# dashboard. If you create the plans in USD, change PAYSTACK_CURRENCY to "USD"
+# and update these to dollar-cents (e.g. 900 = $9.00).
+PAYSTACK_CURRENCY = os.getenv("PAYSTACK_CURRENCY", "NGN")
+PLAN_AMOUNTS = {
+    # In kobo (NGN). Adjust to your actual plan prices.
+    "hobby":  int(os.getenv("PAYSTACK_AMOUNT_HOBBY",  "1400000")),   # ₦14,000
+    "pro":    int(os.getenv("PAYSTACK_AMOUNT_PRO",    "4500000")),   # ₦45,000
+    "agency": int(os.getenv("PAYSTACK_AMOUNT_AGENCY", "15500000")),  # ₦155,000
+}
 from scraper.firecrawl_service import (
     scrape_niche as run_scrape_niche,
     scrape_one as run_scrape_one,
@@ -683,6 +695,16 @@ def billing_initialize(request: BillingInitRequest):
             detail=f"Plan '{request.plan}' is not set up. Add PAYSTACK_PLAN_{request.plan.upper()} to backend env.",
         )
 
+    amount = PLAN_AMOUNTS.get(request.plan)
+    if not amount or amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount for plan '{request.plan}' is missing or zero.",
+        )
+
+    # Initialize Paystack transaction. We pass amount + currency + plan
+    # together — Paystack accepts all three (amount must match the plan's
+    # amount or Paystack returns an error).
     try:
         r = requests.post(
             "https://api.paystack.co/transaction/initialize",
@@ -692,10 +714,10 @@ def billing_initialize(request: BillingInitRequest):
             },
             json={
                 "email": request.email,
+                "amount": amount,
+                "currency": PAYSTACK_CURRENCY,
                 "plan": plan_code,
                 "callback_url": request.callback_url,
-                # Paystack will calculate the amount from the plan; explicit
-                # amount field would override that, so we leave it out.
             },
             timeout=20,
         )
